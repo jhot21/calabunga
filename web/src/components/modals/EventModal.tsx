@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { MdClose } from 'react-icons/md'
 import { toDatetimeLocal, fromDatetimeLocal, toDateLocal } from '../../lib/dateUtils'
 import { defaultRecurrence, WEEK_DAY_LABELS, FREQUENCIES } from '../../lib/rrule'
 import type { Event, Calendar, EditScope, Recurrence } from '../../types/api'
@@ -56,7 +57,7 @@ export default function EventModal({
       <div className="modal" role="dialog" aria-modal="true">
         <div className="modal-header">
           <span className="modal-title">{isEdit ? 'Edit event' : 'New event'}</span>
-          <button className="modal-close" onClick={onClose}>✕</button>
+          <button className="modal-close" onClick={onClose}><MdClose size={18} /></button>
         </div>
         <form onSubmit={handleSubmit}>
           <div className="modal-body">
@@ -77,7 +78,13 @@ export default function EventModal({
                 <div className="modal-field">
                   <label className="modal-field-label">Start date</label>
                   <input className="modal-input" type="date" value={toDateLocal(form.start)}
-                    onChange={(e) => set('start', new Date(e.target.value + 'T00:00:00').toISOString())} required />
+                    onChange={(e) => {
+                      const newStart = new Date(e.target.value + 'T00:00:00')
+                      setForm((f) => {
+                        const duration = new Date(f.end).getTime() - new Date(f.start).getTime()
+                        return { ...f, start: newStart.toISOString(), end: new Date(newStart.getTime() + duration).toISOString() }
+                      })
+                    }} required />
                 </div>
                 <div className="modal-field">
                   <label className="modal-field-label">End date</label>
@@ -90,7 +97,13 @@ export default function EventModal({
                 <div className="modal-field">
                   <label className="modal-field-label">Start</label>
                   <input className="modal-input" type="datetime-local" value={toDatetimeLocal(form.start)}
-                    onChange={(e) => set('start', fromDatetimeLocal(e.target.value))} required />
+                    onChange={(e) => {
+                      const newStart = fromDatetimeLocal(e.target.value)
+                      setForm((f) => {
+                        const duration = new Date(f.end).getTime() - new Date(f.start).getTime()
+                        return { ...f, start: newStart, end: new Date(new Date(newStart).getTime() + duration).toISOString() }
+                      })
+                    }} required />
                 </div>
                 <div className="modal-field">
                   <label className="modal-field-label">End</label>

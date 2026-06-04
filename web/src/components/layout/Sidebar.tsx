@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { addMonths, subMonths, isSameDay, isToday, getMonth, getYear, format } from 'date-fns'
+import { MdAdd, MdChevronLeft, MdChevronRight } from 'react-icons/md'
 import { useCalendarStore } from '../../store/calendarStore'
 import { calendarGrid } from '../../lib/dateUtils'
 import type { Calendar } from '../../types/api'
@@ -33,7 +34,7 @@ export default function Sidebar({
   return (
     <aside className="sidebar">
       <button className="sidebar-add-btn" onClick={onNewEvent}>
-        <span style={{ fontSize: 24, lineHeight: 1 }}>+</span>
+        <MdAdd size={24} />
         <span>New event</span>
       </button>
 
@@ -41,8 +42,8 @@ export default function Sidebar({
         <div className="mini-month-header">
           <span className="mini-month-title">{format(miniDate, 'MMMM yyyy')}</span>
           <div style={{ display: 'flex', gap: 4 }}>
-            <button className="mini-month-nav" onClick={() => setMiniDate((d) => subMonths(d, 1))}>‹</button>
-            <button className="mini-month-nav" onClick={() => setMiniDate((d) => addMonths(d, 1))}>›</button>
+            <button className="mini-month-nav" onClick={() => setMiniDate((d) => subMonths(d, 1))}><MdChevronLeft size={16} /></button>
+            <button className="mini-month-nav" onClick={() => setMiniDate((d) => addMonths(d, 1))}><MdChevronRight size={16} /></button>
           </div>
         </div>
         <div className="mini-month-grid">

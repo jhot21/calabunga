@@ -1,4 +1,5 @@
 import { format } from 'date-fns'
+import { MdEdit, MdDelete, MdClose, MdSchedule, MdRepeat, MdNotes, MdLocationOn } from 'react-icons/md'
 import { recurrenceLabel } from '../../lib/rrule'
 import type { Event, Calendar, EditScope } from '../../types/api'
 
@@ -37,35 +38,35 @@ export default function EventPopover({
             className="popover-action-btn"
             onClick={() => { onEdit(event); onClose() }}
             title="Edit"
-          >✏️</button>
+          ><MdEdit size={18} /></button>
           <button
             className="popover-action-btn"
             onClick={() => { onDelete(event, 'all'); onClose() }}
             title="Delete"
-          >🗑️</button>
-          <button className="popover-action-btn" onClick={onClose} title="Close">✕</button>
+          ><MdDelete size={18} /></button>
+          <button className="popover-action-btn" onClick={onClose} title="Close"><MdClose size={18} /></button>
         </div>
         <div style={{ height: 4, backgroundColor: color }} />
         <div className="popover-body">
           <div className="popover-title">{event.title}</div>
-          <div className="popover-meta"><span className="popover-icon">🕐</span><span>{timeStr}</span></div>
+          <div className="popover-meta"><MdSchedule size={16} className="popover-icon" /><span>{timeStr}</span></div>
           {event.recurrence && (
             <div className="popover-meta">
-              <span className="popover-icon">🔁</span>
+              <MdRepeat size={16} className="popover-icon" />
               <span>{recurrenceLabel(event.recurrence)}</span>
             </div>
           )}
           {calendar && (
             <div className="popover-meta">
-              <span style={{ width: 12, height: 12, borderRadius: 3, backgroundColor: color, display: 'inline-block' }} />
+              <span style={{ width: 12, height: 12, borderRadius: 3, backgroundColor: color, display: 'inline-block', flexShrink: 0 }} />
               <span>{calendar.name}</span>
             </div>
           )}
           {event.description && (
-            <div className="popover-meta"><span className="popover-icon">☰</span><span style={{ whiteSpace: 'pre-wrap' }}>{event.description}</span></div>
+            <div className="popover-meta"><MdNotes size={16} className="popover-icon" /><span style={{ whiteSpace: 'pre-wrap' }}>{event.description}</span></div>
           )}
           {event.location && (
-            <div className="popover-meta"><span className="popover-icon">📍</span><span>{event.location}</span></div>
+            <div className="popover-meta"><MdLocationOn size={16} className="popover-icon" /><span>{event.location}</span></div>
           )}
         </div>
       </div>

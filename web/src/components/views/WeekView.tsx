@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react'
+import { Fragment, useRef, useEffect } from 'react'
 import { isSameDay, isToday, format } from 'date-fns'
 import { weekDays, eventTopPx, eventHeightPx, formatTime, HOUR_HEIGHT } from '../../lib/dateUtils'
 import type { Event, Calendar } from '../../types/api'
@@ -71,14 +71,15 @@ export default function WeekView({
       <div className="week-scroll" ref={scrollRef}>
         <div className="week-time-grid" style={{ height: HOUR_HEIGHT * 24 }}>
           {HOURS.map((hour) => (
-            <div key={hour} style={{ display: 'contents' }}>
-              <div className="week-hour-label">
+            <Fragment key={hour}>
+              <div className="week-hour-label" style={{ gridRow: hour + 1, gridColumn: 1 }}>
                 {hour === 0 ? '' : format(new Date(2026, 0, 1, hour), 'h a')}
               </div>
               {days.map((day, di) => (
                 <div
                   key={di}
                   className="week-hour-cell"
+                  style={{ gridRow: hour + 1, gridColumn: di + 2 }}
                   onClick={() => {
                     const d = new Date(day)
                     d.setHours(hour, 0, 0, 0)
@@ -86,7 +87,7 @@ export default function WeekView({
                   }}
                 />
               ))}
-            </div>
+            </Fragment>
           ))}
 
           {days.map((day, di) => {
