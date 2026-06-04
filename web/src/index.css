@@ -352,7 +352,12 @@ a { color: inherit; text-decoration: none; }
 }
 .week-hour-cell:hover { background: var(--hover-bg); }
 .week-events-col {
-  position: relative; grid-row: 1 / span 24;
+  position: relative; grid-row: 1 / span 24; pointer-events: none;
+}
+.week-events-col::after {
+  content: ''; position: absolute;
+  top: 0; right: 0; bottom: 0; width: 1px;
+  background: var(--border); pointer-events: none;
 }
 .week-event {
   position: absolute; left: 2px; right: 2px;

@@ -95,12 +95,8 @@ export default function WeekView({
             return (
               <div
                 key={`col-${di}`}
-                style={{
-                  gridColumn: di + 2,
-                  gridRow: `1 / span ${HOURS.length}`,
-                  position: 'relative',
-                  pointerEvents: 'none',
-                }}
+                className="week-events-col"
+                style={{ gridColumn: di + 2 }}
               >
                 {dayEvents.map((ev) => {
                   const color = calMap.get(ev.calendarId)?.color ?? '#4285f4'
