@@ -1,12 +1,16 @@
 package api
 
 import (
+	"crypto/rand"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"calabunga/internal/auth"
 	"calabunga/internal/caldav"
 	"calabunga/internal/config"
@@ -125,13 +129,137 @@ func parseEventReport(xmlBody []byte, calendarID string) ([]types.Event, error) 
 }
 
 func handleCreateEvent(w http.ResponseWriter, r *http.Request, cfg config.Config) {
-	writeError(w, http.StatusNotImplemented, "not_implemented", "not yet implemented")
+	claims := claimsFromCtx(r)
+	creds, err := auth.Decrypt(cfg.JWTSecret, claims)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "token_expired", "could not decrypt credentials")
+		return
+	}
+
+	var event types.Event
+	if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return
+	}
+
+	if event.UID == "" {
+		event.UID = generateUID()
+	}
+
+	ical, err := caldav.EventToVCalendar(event)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "server_error", "failed to serialize event")
+		return
+	}
+
+	q := resolveQuirks(creds.Quirks)
+	client := caldav.NewClient(creds.ServerURL, creds.Username, creds.Password, q)
+
+	path := extractPath(event.CalendarID) + event.UID + ".ics"
+
+	etag, err := client.Put(path, ical, "")
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "caldav_error", "failed to create event")
+		return
+	}
+	event.ETag = etag
+	writeJSON(w, http.StatusCreated, event)
 }
 
 func handleUpdateEvent(w http.ResponseWriter, r *http.Request, cfg config.Config) {
-	writeError(w, http.StatusNotImplemented, "not_implemented", "not yet implemented")
+	claims := claimsFromCtx(r)
+	creds, err := auth.Decrypt(cfg.JWTSecret, claims)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "token_expired", "could not decrypt credentials")
+		return
+	}
+
+	var event types.Event
+	if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return
+	}
+
+	scope := types.EditScope(r.URL.Query().Get("editScope"))
+	if scope == "" {
+		scope = types.EditAll
+	}
+
+	ical, err := caldav.EventToVCalendar(event)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "server_error", "failed to serialize event")
+		return
+	}
+
+	q := resolveQuirks(creds.Quirks)
+	client := caldav.NewClient(creds.ServerURL, creds.Username, creds.Password, q)
+
+	calendarID := r.URL.Query().Get("calendarId")
+	path := extractPath(calendarID) + event.UID + ".ics"
+
+	switch scope {
+	case types.EditAll:
+		etag, err := client.Put(path, ical, event.ETag)
+		if err == caldav.ErrConflict {
+			writeError(w, http.StatusConflict, "conflict", "event was modified externally")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "caldav_error", "failed to update event")
+			return
+		}
+		event.ETag = etag
+	case types.EditThis, types.EditThisAndFollowing:
+		writeError(w, http.StatusNotImplemented, "not_implemented",
+			"editing individual occurrences of recurring events is not yet supported")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, event)
 }
 
 func handleDeleteEvent(w http.ResponseWriter, r *http.Request, cfg config.Config) {
-	writeError(w, http.StatusNotImplemented, "not_implemented", "not yet implemented")
+	claims := claimsFromCtx(r)
+	creds, err := auth.Decrypt(cfg.JWTSecret, claims)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "token_expired", "could not decrypt credentials")
+		return
+	}
+
+	q := resolveQuirks(creds.Quirks)
+	client := caldav.NewClient(creds.ServerURL, creds.Username, creds.Password, q)
+
+	calendarID := r.URL.Query().Get("calendarId")
+	uid := chi.URLParam(r, "uid")
+	if uid == "" {
+		uid = r.URL.Query().Get("uid")
+	}
+	etag := r.URL.Query().Get("etag")
+	path := extractPath(calendarID) + uid + ".ics"
+
+	if err := client.Delete(path, etag); err != nil {
+		if err == caldav.ErrConflict {
+			writeError(w, http.StatusConflict, "conflict", "event was modified externally")
+			return
+		}
+		writeError(w, http.StatusBadGateway, "caldav_error", "failed to delete event")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func generateUID() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return fmt.Sprintf("%x@calabunga", b)
+}
+
+func extractPath(rawURL string) string {
+	if strings.HasPrefix(rawURL, "http") {
+		u, err := url.Parse(rawURL)
+		if err == nil {
+			return u.Path
+		}
+	}
+	return rawURL
 }
