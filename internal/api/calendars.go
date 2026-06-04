@@ -40,6 +40,7 @@ func NewCalendarsHandler(cfg config.Config) http.Handler {
 				<displayname/>
 				<cs:getctag xmlns:cs="http://calendarserver.org/ns/"/>
 				<cal:calendar-color xmlns:cal="urn:ietf:params:xml:ns:caldav"/>
+				<apple:calendar-color xmlns:apple="http://apple.com/ns/ical/"/>
 			</prop>`)
 		if err != nil {
 			if errors.Is(err, caldav.ErrUnauthorized) {
@@ -55,15 +56,30 @@ func NewCalendarsHandler(cfg config.Config) http.Handler {
 	})
 }
 
+type calendarColor string
+
+func (c *calendarColor) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	var value string
+	if err := d.DecodeElement(&value, &start); err != nil {
+		return err
+	}
+	*c = calendarColor(value)
+	return nil
+}
+
 func parseCalendars(xmlBody []byte) []types.Calendar {
+	type prop struct {
+		DisplayName string          `xml:"displayname"`
+		CTag        string          `xml:"getctag"`
+		Color       calendarColor   `xml:"calendar-color"`
+	}
 	type propstat struct {
-		DisplayName string `xml:"prop>displayname"`
-		CTag        string `xml:"prop>getctag"`
-		Color       string `xml:"prop>calendar-color"`
+		Prop   prop   `xml:"prop"`
+		Status string `xml:"status"`
 	}
 	type response struct {
-		Href     string   `xml:"href"`
-		Propstat propstat `xml:"propstat"`
+		Href     string     `xml:"href"`
+		Propstat []propstat `xml:"propstat"`
 	}
 	type multistatus struct {
 		Responses []response `xml:"response"`
@@ -74,17 +90,24 @@ func parseCalendars(xmlBody []byte) []types.Calendar {
 
 	var cals []types.Calendar
 	for _, r := range ms.Responses {
-		if r.Propstat.DisplayName == "" {
+		if !strings.HasSuffix(r.Href, "/") {
 			continue
 		}
-		if !strings.HasSuffix(r.Href, "/") {
+		var props *prop
+		for _, ps := range r.Propstat {
+			if strings.Contains(ps.Status, "200") && ps.Prop.DisplayName != "" {
+				props = &ps.Prop
+				break
+			}
+		}
+		if props == nil {
 			continue
 		}
 		cals = append(cals, types.Calendar{
 			ID:    r.Href,
-			Name:  r.Propstat.DisplayName,
-			Color: r.Propstat.Color,
-			CTag:  r.Propstat.CTag,
+			Name:  props.DisplayName,
+			Color: string(props.Color),
+			CTag:  props.CTag,
 		})
 	}
 	return cals
