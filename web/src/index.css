@@ -327,6 +327,13 @@ a { color: inherit; text-decoration: none; }
 .week-time-grid {
   display: grid; grid-template-columns: 56px repeat(7, 1fr);
   position: relative;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent calc(64px - 1px),
+    var(--border) calc(64px - 1px),
+    var(--border) 64px
+  );
 }
 .week-time-slot-bg {
   position: relative;
@@ -341,8 +348,7 @@ a { color: inherit; text-decoration: none; }
 }
 .week-hour-cell {
   height: 64px; border-right: 1px solid var(--border);
-  border-bottom: 1px solid var(--border); cursor: pointer;
-  transition: background .1s;
+  cursor: pointer; transition: background .1s;
 }
 .week-hour-cell:hover { background: var(--hover-bg); }
 .week-events-col {
