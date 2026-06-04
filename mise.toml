@@ -1,0 +1,8 @@
+[tools]
+go = "1"
+node = "lts"
+task = "latest"
+
+[env]
+_.file = '.env'
+PORT = "8086"

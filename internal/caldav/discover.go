@@ -87,12 +87,13 @@ func extractHref(xmlBody []byte, element string) (string, error) {
 		return "", fmt.Errorf("malformed element %q", element)
 	}
 	sub = sub[tagEnd+1:]
-	hStart := strings.Index(sub, "<href>")
+	// Match <href> or any namespaced variant like <d:href>
+	hStart := strings.Index(sub, "href>")
 	if hStart < 0 {
 		return "", fmt.Errorf("no href in element %q", element)
 	}
-	sub = sub[hStart+6:]
-	hEnd := strings.Index(sub, "</href>")
+	sub = sub[hStart+5:]
+	hEnd := strings.Index(sub, "</")
 	if hEnd < 0 {
 		return "", fmt.Errorf("no closing href in element %q", element)
 	}

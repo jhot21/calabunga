@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -65,11 +66,11 @@ func handleGetEvents(w http.ResponseWriter, r *http.Request, cfg config.Config) 
 		return
 	}
 
-	query := fmt.Sprintf(`<calendar-query xmlns="urn:ietf:params:xml:ns:caldav">
-  <prop>
-    <getetag xmlns="DAV:"/>
+	query := fmt.Sprintf(`<calendar-query xmlns="urn:ietf:params:xml:ns:caldav" xmlns:d="DAV:">
+  <d:prop>
+    <d:getetag/>
     <calendar-data/>
-  </prop>
+  </d:prop>
   <filter>
     <comp-filter name="VCALENDAR">
       <comp-filter name="VEVENT">
@@ -83,11 +84,15 @@ func handleGetEvents(w http.ResponseWriter, r *http.Request, cfg config.Config) 
 
 	body, err := client.Report(calendarID, query)
 	if err != nil {
+		if errors.Is(err, caldav.ErrUnauthorized) {
+			writeError(w, http.StatusUnauthorized, "auth_failed", "CalDAV server rejected credentials")
+			return
+		}
 		writeError(w, http.StatusBadGateway, "caldav_error", "failed to fetch events")
 		return
 	}
 
-	events, err := parseEventReport(body, calendarID)
+	events, err := parseEventReport(body, calendarID, start, end)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "server_error", "failed to parse events")
 		return
@@ -96,7 +101,7 @@ func handleGetEvents(w http.ResponseWriter, r *http.Request, cfg config.Config) 
 	writeJSON(w, http.StatusOK, events)
 }
 
-func parseEventReport(xmlBody []byte, calendarID string) ([]types.Event, error) {
+func parseEventReport(xmlBody []byte, calendarID string, rangeStart, rangeEnd time.Time) ([]types.Event, error) {
 	type propstat struct {
 		ETag         string `xml:"prop>getetag"`
 		CalendarData string `xml:"prop>calendar-data"`
@@ -119,7 +124,7 @@ func parseEventReport(xmlBody []byte, calendarID string) ([]types.Event, error) 
 		if r.Propstat.CalendarData == "" {
 			continue
 		}
-		events, err := caldav.ParseVCalendar([]byte(strings.TrimSpace(r.Propstat.CalendarData)), calendarID, r.Propstat.ETag)
+		events, err := caldav.ParseVCalendar([]byte(strings.TrimSpace(r.Propstat.CalendarData)), calendarID, r.Propstat.ETag, rangeStart, rangeEnd)
 		if err != nil {
 			continue
 		}

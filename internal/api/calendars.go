@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/xml"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -26,6 +27,10 @@ func NewCalendarsHandler(cfg config.Config) http.Handler {
 
 		home, err := caldav.Discover(client, creds.ServerURL)
 		if err != nil {
+			if errors.Is(err, caldav.ErrUnauthorized) {
+				writeError(w, http.StatusUnauthorized, "auth_failed", "CalDAV server rejected credentials")
+				return
+			}
 			writeError(w, http.StatusBadGateway, "caldav_error", "could not discover calendar home")
 			return
 		}
@@ -37,6 +42,10 @@ func NewCalendarsHandler(cfg config.Config) http.Handler {
 				<cal:calendar-color xmlns:cal="urn:ietf:params:xml:ns:caldav"/>
 			</prop>`)
 		if err != nil {
+			if errors.Is(err, caldav.ErrUnauthorized) {
+				writeError(w, http.StatusUnauthorized, "auth_failed", "CalDAV server rejected credentials")
+				return
+			}
 			writeError(w, http.StatusBadGateway, "caldav_error", "could not list calendars")
 			return
 		}

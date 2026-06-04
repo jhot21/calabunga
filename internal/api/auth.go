@@ -2,10 +2,12 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
 	"calabunga/internal/auth"
+	"calabunga/internal/caldav"
 	"calabunga/internal/config"
 	"calabunga/internal/quirks"
 	"calabunga/internal/types"
@@ -21,8 +23,15 @@ func NewConnectHandler(cfg config.Config) http.Handler {
 
 		q := quirks.Detect(req.URL, req.Username, req.Password)
 
-		if !validateCredentials(req.URL, req.Username, req.Password) {
-			writeError(w, http.StatusUnauthorized, "auth_failed", "could not authenticate with CalDAV server")
+		if err := validateCredentials(req.URL, req.Username, req.Password, q); err != nil {
+			switch {
+			case errors.Is(err, caldav.ErrUnauthorized):
+				writeError(w, http.StatusUnauthorized, "auth_failed", "Incorrect username or password")
+			case errors.Is(err, caldav.ErrNotFound):
+				writeError(w, http.StatusUnprocessableEntity, "not_found", "Could not find a CalDAV server at this URL")
+			default:
+				writeError(w, http.StatusBadGateway, "connection_failed", "Could not connect to server — check the URL and try again")
+			}
 			return
 		}
 
@@ -47,18 +56,19 @@ func NewConnectHandler(cfg config.Config) http.Handler {
 	})
 }
 
-func validateCredentials(serverURL, username, password string) bool {
-	req, err := http.NewRequest("OPTIONS", serverURL, nil)
+func validateCredentials(serverURL, username, password string, q quirks.Quirks) error {
+	client := caldav.NewClient(serverURL, username, password, q)
+	_, err := caldav.Discover(client, serverURL)
 	if err != nil {
-		return false
+		if errors.Is(err, caldav.ErrUnauthorized) {
+			return caldav.ErrUnauthorized
+		}
+		if errors.Is(err, caldav.ErrNotFound) {
+			return caldav.ErrNotFound
+		}
+		return err
 	}
-	req.SetBasicAuth(username, password)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return false
-	}
-	resp.Body.Close()
-	return resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden
+	return nil
 }
 
 func parseTTL(s string, fallback time.Duration) time.Duration {

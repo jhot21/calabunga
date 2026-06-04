@@ -23,7 +23,7 @@ END:VEVENT
 END:VCALENDAR`
 
 func TestParseVCalendar(t *testing.T) {
-	events, err := caldav.ParseVCalendar([]byte(sampleVEvent), "cal-1", `"etag-abc"`)
+	events, err := caldav.ParseVCalendar([]byte(sampleVEvent), "cal-1", `"etag-abc"`, time.Time{}, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 
@@ -51,10 +51,34 @@ DTEND;VALUE=DATE:20260605
 END:VEVENT
 END:VCALENDAR`
 
-	events, err := caldav.ParseVCalendar([]byte(ical), "cal-1", `"etag"`)
+	events, err := caldav.ParseVCalendar([]byte(ical), "cal-1", `"etag"`, time.Time{}, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, events, 1)
 	assert.True(t, events[0].AllDay)
+}
+
+func TestParseVCalendar_Recurring(t *testing.T) {
+	icalData := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:pay-bills@example.com
+SUMMARY:Pay Credit Card
+DTSTART:20210310T100000Z
+DTEND:20210310T101000Z
+RRULE:FREQ=MONTHLY;BYMONTHDAY=10
+END:VEVENT
+END:VCALENDAR`
+
+	rangeStart := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	rangeEnd := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+
+	events, err := caldav.ParseVCalendar([]byte(icalData), "cal-1", `"etag"`, rangeStart, rangeEnd)
+	require.NoError(t, err)
+	require.Len(t, events, 1, "should return the June 2026 occurrence, not the 2021 master")
+	assert.Equal(t, "pay-bills@example.com", events[0].UID)
+	assert.Equal(t, 2026, events[0].Start.Year())
+	assert.Equal(t, time.June, events[0].Start.Month())
+	assert.Equal(t, 10, events[0].Start.Day())
 }
 
 func TestEventToVCalendar(t *testing.T) {

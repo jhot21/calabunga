@@ -6,10 +6,14 @@ import (
 	"time"
 
 	ical "github.com/emersion/go-ical"
+	rrulelib "github.com/teambition/rrule-go"
 	"calabunga/internal/types"
 )
 
-func ParseVCalendar(data []byte, calendarID, etag string) ([]types.Event, error) {
+// ParseVCalendar parses a VCALENDAR and returns Event objects.
+// rangeStart/rangeEnd are used to expand recurring events to the occurrences
+// that fall within the window; pass zero values when no range is needed.
+func ParseVCalendar(data []byte, calendarID, etag string, rangeStart, rangeEnd time.Time) ([]types.Event, error) {
 	dec := ical.NewDecoder(bytes.NewReader(data))
 	cal, err := dec.Decode()
 	if err != nil {
@@ -21,13 +25,52 @@ func ParseVCalendar(data []byte, calendarID, etag string) ([]types.Event, error)
 		if child.Name != ical.CompEvent {
 			continue
 		}
-		e, err := vEventToEvent(child, calendarID, etag)
+		expanded, err := expandVEvent(child, calendarID, etag, rangeStart, rangeEnd)
 		if err != nil {
 			return nil, err
 		}
-		events = append(events, e)
+		events = append(events, expanded...)
 	}
 	return events, nil
+}
+
+func expandVEvent(comp *ical.Component, calendarID, etag string, rangeStart, rangeEnd time.Time) ([]types.Event, error) {
+	base, err := vEventToEvent(comp, calendarID, etag)
+	if err != nil {
+		return nil, err
+	}
+
+	rruleProp := comp.Props.Get("RRULE")
+	if rruleProp == nil || rangeStart.IsZero() || rangeEnd.IsZero() {
+		return []types.Event{base}, nil
+	}
+
+	duration := base.End.Sub(base.Start)
+
+	// Build the DTSTART line, preserving TZID so the rrule library handles DST
+	// correctly (e.g. America/Denver wall-clock 10:00 stays 10:00 across MST/MDT).
+	tzid := base.Start.Location().String()
+	var dtstart string
+	if tzid == "" || tzid == "UTC" {
+		dtstart = "DTSTART:" + base.Start.UTC().Format("20060102T150405Z")
+	} else {
+		dtstart = "DTSTART;TZID=" + tzid + ":" + base.Start.Format("20060102T150405")
+	}
+
+	set, err := rrulelib.StrToRRuleSet(dtstart + "\nRRULE:" + rruleProp.Value)
+	if err != nil {
+		// Unparseable RRULE — fall back to master event
+		return []types.Event{base}, nil
+	}
+
+	var occurrences []types.Event
+	for _, t := range set.Between(rangeStart.UTC(), rangeEnd.UTC(), true) {
+		occ := base
+		occ.Start = t
+		occ.End = t.Add(duration)
+		occurrences = append(occurrences, occ)
+	}
+	return occurrences, nil
 }
 
 func vEventToEvent(comp *ical.Component, calendarID, etag string) (types.Event, error) {

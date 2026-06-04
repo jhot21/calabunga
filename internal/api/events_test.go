@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -43,6 +44,12 @@ func TestGetEvents(t *testing.T) {
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(200)
 			return
+		}
+		// The REPORT body must use <d:prop> in DAV: namespace so servers like Baikal/SabreDAV
+		// return calendar-data. A <prop> in the caldav namespace is silently ignored.
+		if r.Method == "REPORT" {
+			body, _ := io.ReadAll(r.Body)
+			assert.Contains(t, string(body), `<d:prop>`, "REPORT query must use DAV:-namespaced <d:prop>")
 		}
 		w.WriteHeader(207)
 		w.Write([]byte(sampleCalendarResponse))

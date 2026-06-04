@@ -19,11 +19,19 @@ func TestConnect_Success(t *testing.T) {
 	caldavSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, pass, ok := r.BasicAuth()
 		if !ok || user != "alice" || pass != "secret" {
-			w.WriteHeader(401)
+			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		w.Header().Set("Server", "SomeServer/1.0")
-		w.WriteHeader(200)
+		w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+		w.WriteHeader(207)
+		switch r.URL.Path {
+		case "/.well-known/caldav", "/":
+			w.Write([]byte(`<?xml version="1.0"?><multistatus xmlns="DAV:"><response><href>/</href><propstat><prop><current-user-principal><href>/principals/alice/</href></current-user-principal></prop><status>HTTP/1.1 200 OK</status></propstat></response></multistatus>`))
+		case "/principals/alice/":
+			w.Write([]byte(`<?xml version="1.0"?><multistatus xmlns="DAV:"><response><href>/principals/alice/</href><propstat><prop><calendar-home-set xmlns="urn:ietf:params:xml:ns:caldav"><href>/calendars/alice/</href></calendar-home-set></prop><status>HTTP/1.1 200 OK</status></propstat></response></multistatus>`))
+		default:
+			w.Write([]byte(`<?xml version="1.0"?><multistatus xmlns="DAV:"></multistatus>`))
+		}
 	}))
 	defer caldavSrv.Close()
 

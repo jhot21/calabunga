@@ -14,7 +14,9 @@ export function useAuth() {
 
   const connectMutation = useMutation({
     mutationFn: (req: ConnectRequest) => api.connect(req),
-    onSuccess: (data) => {
+    onSuccess: (data, req) => {
+      localStorage.setItem('caldav_url', req.url)
+      localStorage.setItem('caldav_username', req.username)
       setAuth(data.token, data.expiresAt)
       navigate('/')
     },

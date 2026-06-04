@@ -14,7 +14,10 @@ export default function LoginPage() {
   const { isAuthenticated, connect } = useAuth()
   const navigate = useNavigate()
   const [form, setForm] = useState<ConnectRequest>({
-    url: '', username: '', password: '', ttl: '24h',
+    url: localStorage.getItem('caldav_url') ?? '',
+    username: localStorage.getItem('caldav_username') ?? '',
+    password: '',
+    ttl: '24h',
   })
 
   useEffect(() => {
