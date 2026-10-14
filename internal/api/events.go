@@ -233,6 +233,14 @@ func handleDeleteEvent(w http.ResponseWriter, r *http.Request, cfg config.Config
 		return
 	}
 
+	// Deleting a single occurrence needs an EXDATE or override, which isn't
+	// implemented. Falling through would delete the resource, i.e. the whole series.
+	if scope := types.EditScope(r.URL.Query().Get("editScope")); scope == types.EditThis || scope == types.EditThisAndFollowing {
+		writeError(w, http.StatusNotImplemented, "not_implemented",
+			"deleting individual occurrences of recurring events is not yet supported")
+		return
+	}
+
 	q := resolveQuirks(creds.Quirks)
 	client := caldav.NewClient(creds.ServerURL, creds.Username, creds.Password, q)
 

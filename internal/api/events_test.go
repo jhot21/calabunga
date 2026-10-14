@@ -128,10 +128,44 @@ func TestDeleteEvent(t *testing.T) {
 	creds := auth.Credentials{ServerURL: caldavSrv.URL, Username: "alice", Password: "pass", Quirks: "noop"}
 	token, _ := auth.Issue(cfg.JWTSecret, creds, 24*time.Hour, cfg.JWTMaxTTL)
 
-	req := httptest.NewRequest("DELETE", "/api/events/event1@example.com?calendarId="+caldavSrv.URL+"/dav/alice/personal/&editScope=this&etag=%22old-etag%22", nil)
+	req := httptest.NewRequest("DELETE", "/api/events/event1@example.com?calendarId="+caldavSrv.URL+"/dav/alice/personal/&editScope=all&etag=%22old-etag%22", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	w := httptest.NewRecorder()
 
 	api.JWTMiddleware(cfg)(api.NewEventsHandler(cfg)).ServeHTTP(w, req)
 	assert.Equal(t, http.StatusNoContent, w.Code)
 }
+
+// Deleting one occurrence is not supported yet. Honoring it by deleting the
+// resource would silently remove the whole series, so it must be refused.
+func TestDeleteEvent_RefusesPartialScopes(t *testing.T) {
+	for _, scope := range []string{"this", "thisAndFollowing"} {
+		t.Run(scope, func(t *testing.T) {
+			deleted := false
+			caldavSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.Method {
+				case "OPTIONS":
+					w.WriteHeader(200)
+				case "DELETE":
+					deleted = true
+					w.WriteHeader(204)
+				}
+			}))
+			defer caldavSrv.Close()
+
+			cfg := config.Config{JWTSecret: "testsecret12345678901234567890ab", JWTMaxTTL: 720 * time.Hour}
+			creds := auth.Credentials{ServerURL: caldavSrv.URL, Username: "alice", Password: "pass", Quirks: "noop"}
+			token, _ := auth.Issue(cfg.JWTSecret, creds, 24*time.Hour, cfg.JWTMaxTTL)
+
+			req := httptest.NewRequest("DELETE", "/api/events/event1@example.com?calendarId="+caldavSrv.URL+"/dav/alice/personal/&editScope="+scope+"&etag=%22old-etag%22", nil)
+			req.Header.Set("Authorization", "Bearer "+token)
+			w := httptest.NewRecorder()
+
+			api.JWTMiddleware(cfg)(api.NewEventsHandler(cfg)).ServeHTTP(w, req)
+
+			assert.Equal(t, http.StatusNotImplemented, w.Code)
+			assert.False(t, deleted, "no DELETE may reach the CalDAV server")
+		})
+	}
+}
+
