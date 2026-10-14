@@ -9,7 +9,4 @@ services:
       JWT_SECRET: "${JWT_SECRET:-changeme}"
       JWT_MAX_TTL: "${JWT_MAX_TTL:-720h}"
       JWT_DEFAULT_TTL: "${JWT_DEFAULT_TTL:-24h}"
-      WEBDAV_URL: "${WEBDAV_URL:-}"
-      WEBDAV_USER: "${WEBDAV_USER:-}"
-      WEBDAV_PASS: "${WEBDAV_PASS:-}"
     restart: unless-stopped
