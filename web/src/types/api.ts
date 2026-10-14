@@ -22,6 +22,7 @@ export interface Recurrence {
 export interface Event {
   uid: string;
   calendarId: string;   // CalDAV calendar path
+  href?: string;        // CalDAV resource path; edits are written back here
   etag: string;
   title: string;
   start: string;        // UTC ISO8601 e.g. "2026-06-03T10:00:00Z"

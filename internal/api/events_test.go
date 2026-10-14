@@ -169,3 +169,156 @@ func TestDeleteEvent_RefusesPartialScopes(t *testing.T) {
 	}
 }
 
+
+const updateFixture = `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:event1@example.com
+SUMMARY:Team standup
+DTSTART:20260603T100000Z
+DTEND:20260603T103000Z
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:Reminder
+TRIGGER:-PT15M
+END:VALARM
+END:VEVENT
+END:VCALENDAR`
+
+type updateServer struct {
+	srv      *httptest.Server
+	gotPath  string
+	gotMatch string
+	gotBody  string
+	putCount int
+}
+
+// newUpdateServer serves updateFixture at resourcePath with the given ETag and records the PUT.
+func newUpdateServer(t *testing.T, resourcePath, etag string) *updateServer {
+	t.Helper()
+	us := &updateServer{}
+	us.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case "OPTIONS":
+			w.WriteHeader(200)
+		case "GET":
+			if r.URL.Path != resourcePath {
+				w.WriteHeader(404)
+				return
+			}
+			w.Header().Set("ETag", etag)
+			w.Header().Set("Content-Type", "text/calendar")
+			w.Write([]byte(updateFixture))
+		case "PUT":
+			b, _ := io.ReadAll(r.Body)
+			us.putCount++
+			us.gotPath, us.gotMatch, us.gotBody = r.URL.Path, r.Header.Get("If-Match"), string(b)
+			w.Header().Set("ETag", `"etag-new"`)
+			w.WriteHeader(204)
+		}
+	}))
+	t.Cleanup(us.srv.Close)
+	return us
+}
+
+func doUpdate(t *testing.T, us *updateServer, ev types.Event) *httptest.ResponseRecorder {
+	t.Helper()
+	cfg := config.Config{JWTSecret: "testsecret12345678901234567890ab", JWTMaxTTL: 720 * time.Hour}
+	creds := auth.Credentials{ServerURL: us.srv.URL, Username: "alice", Password: "pass", Quirks: "noop"}
+	token, _ := auth.Issue(cfg.JWTSecret, creds, 24*time.Hour, cfg.JWTMaxTTL)
+
+	ev.CalendarID = us.srv.URL + "/dav/alice/personal/"
+	body, _ := json.Marshal(ev)
+	req := httptest.NewRequest("PUT", "/api/events/"+ev.UID+"?editScope=all&calendarId="+ev.CalendarID, strings.NewReader(string(body)))
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	api.JWTMiddleware(cfg)(api.NewEventsHandler(cfg)).ServeHTTP(w, req)
+	return w
+}
+
+func updateEvent() types.Event {
+	return types.Event{
+		UID: "event1@example.com", ETag: `"etag-1"`, Title: "Team standup (renamed)",
+		Start: time.Date(2026, 6, 3, 10, 0, 0, 0, time.UTC), End: time.Date(2026, 6, 3, 10, 30, 0, 0, time.UTC),
+	}
+}
+
+func TestUpdateEvent_MergesIntoExistingResourceAtItsHref(t *testing.T) {
+	// The resource name is not UID.ics, so the path must come from the REPORT href.
+	us := newUpdateServer(t, "/dav/alice/personal/custom-name.ics", `"etag-1"`)
+	ev := updateEvent()
+	ev.Href = "/dav/alice/personal/custom-name.ics"
+
+	w := doUpdate(t, us, ev)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "/dav/alice/personal/custom-name.ics", us.gotPath)
+	assert.Equal(t, `"etag-1"`, us.gotMatch)
+	assert.Contains(t, us.gotBody, "SUMMARY:Team standup (renamed)")
+	assert.Contains(t, us.gotBody, "TRIGGER:-PT15M", "existing alarm must survive the edit")
+}
+
+func TestUpdateEvent_FallsBackToUIDPathWithoutHref(t *testing.T) {
+	us := newUpdateServer(t, "/dav/alice/personal/event1@example.com.ics", `"etag-1"`)
+
+	w := doUpdate(t, us, updateEvent())
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "/dav/alice/personal/event1@example.com.ics", us.gotPath)
+}
+
+func TestUpdateEvent_StaleETagIsAConflictAndWritesNothing(t *testing.T) {
+	us := newUpdateServer(t, "/dav/alice/personal/event1@example.com.ics", `"etag-2"`)
+
+	w := doUpdate(t, us, updateEvent()) // client still holds "etag-1"
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+	assert.Equal(t, 0, us.putCount)
+}
+
+func TestUpdateEvent_MissingResourceIsAConflict(t *testing.T) {
+	us := newUpdateServer(t, "/dav/alice/personal/somewhere-else.ics", `"etag-1"`)
+
+	w := doUpdate(t, us, updateEvent())
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+	assert.Equal(t, 0, us.putCount)
+}
+
+func TestUpdateEvent_RejectsHrefOutsideTheCalendar(t *testing.T) {
+	us := newUpdateServer(t, "/dav/alice/other/event1.ics", `"etag-1"`)
+	ev := updateEvent()
+	ev.Href = "/dav/alice/other/event1.ics"
+
+	w := doUpdate(t, us, ev)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, 0, us.putCount)
+}
+
+func TestGetEvents_ReturnsResourceHref(t *testing.T) {
+	caldavSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(200)
+			return
+		}
+		w.WriteHeader(207)
+		w.Write([]byte(sampleCalendarResponse))
+	}))
+	defer caldavSrv.Close()
+
+	cfg := config.Config{JWTSecret: "testsecret12345678901234567890ab", JWTMaxTTL: 720 * time.Hour}
+	creds := auth.Credentials{ServerURL: caldavSrv.URL, Username: "alice", Password: "pass", Quirks: "noop"}
+	token, _ := auth.Issue(cfg.JWTSecret, creds, 24*time.Hour, cfg.JWTMaxTTL)
+
+	req := httptest.NewRequest("GET", "/api/events?calendarId=/dav/alice/personal/&start=2026-06-01T00:00:00Z&end=2026-07-01T00:00:00Z", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	api.JWTMiddleware(cfg)(api.NewEventsHandler(cfg)).ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var events []types.Event
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &events))
+	require.Len(t, events, 1)
+	assert.Equal(t, "/dav/alice/personal/event1.ics", events[0].Href)
+}

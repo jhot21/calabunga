@@ -122,6 +122,15 @@ func vEventToEvent(comp *ical.Component, calendarID, etag string) (types.Event, 
 		}
 	}
 
+	// An event may carry DURATION instead of DTEND (RFC 5545 allows either).
+	if e.End.IsZero() {
+		if dur := comp.Props.Get(ical.PropDuration); dur != nil {
+			if d, err := dur.Duration(); err == nil {
+				e.End = e.Start.Add(d)
+			}
+		}
+	}
+
 	return e, nil
 }
 

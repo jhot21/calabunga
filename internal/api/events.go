@@ -130,6 +130,9 @@ func parseEventReport(xmlBody []byte, calendarID string, rangeStart, rangeEnd ti
 			log.Printf("skipping event %s: %v", r.Href, err)
 			continue
 		}
+		for i := range events {
+			events[i].Href = r.Href
+		}
 		all = append(all, events...)
 	}
 	return all, nil
@@ -170,6 +173,7 @@ func handleCreateEvent(w http.ResponseWriter, r *http.Request, cfg config.Config
 		return
 	}
 	event.ETag = etag
+	event.Href = path
 	writeJSON(w, http.StatusCreated, event)
 }
 
@@ -192,21 +196,49 @@ func handleUpdateEvent(w http.ResponseWriter, r *http.Request, cfg config.Config
 		scope = types.EditAll
 	}
 
-	ical, err := caldav.EventToVCalendar(event)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "server_error", "failed to serialize event")
-		return
-	}
-
 	q := resolveQuirks(creds.Quirks)
 	client := caldav.NewClient(creds.ServerURL, creds.Username, creds.Password, q)
 
 	calendarID := r.URL.Query().Get("calendarId")
-	path := extractPath(calendarID) + event.UID + ".ics"
 
 	switch scope {
 	case types.EditAll:
-		etag, err := client.Put(path, ical, event.ETag)
+		path, ok := resourcePath(calendarID, event)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "bad_request", "href is outside the calendar")
+			return
+		}
+
+		// Edit the stored object rather than replacing it, so data this app
+		// doesn't manage (alarms, attendees, ...) survives the save.
+		existing, serverETag, err := client.Get(path)
+		if err != nil {
+			switch {
+			case errors.Is(err, caldav.ErrUnauthorized):
+				writeError(w, http.StatusUnauthorized, "auth_failed", "CalDAV server rejected credentials")
+			case errors.Is(err, caldav.ErrNotFound):
+				writeError(w, http.StatusConflict, "conflict", "event was modified externally")
+			default:
+				writeError(w, http.StatusBadGateway, "caldav_error", "failed to load event")
+			}
+			return
+		}
+		if event.ETag != "" && !sameETag(event.ETag, serverETag) {
+			writeError(w, http.StatusConflict, "conflict", "event was modified externally")
+			return
+		}
+
+		ical, err := caldav.MergeEvent(existing, event)
+		if errors.Is(err, caldav.ErrUnsupportedChange) {
+			writeError(w, http.StatusNotImplemented, "not_implemented", err.Error())
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "server_error", "failed to update event")
+			return
+		}
+
+		etag, err := client.Put(path, ical, serverETag)
 		if err == caldav.ErrConflict {
 			writeError(w, http.StatusConflict, "conflict", "event was modified externally")
 			return
@@ -216,6 +248,7 @@ func handleUpdateEvent(w http.ResponseWriter, r *http.Request, cfg config.Config
 			return
 		}
 		event.ETag = etag
+		event.Href = path
 	case types.EditThis, types.EditThisAndFollowing:
 		writeError(w, http.StatusNotImplemented, "not_implemented",
 			"editing individual occurrences of recurring events is not yet supported")
@@ -261,6 +294,25 @@ func handleDeleteEvent(w http.ResponseWriter, r *http.Request, cfg config.Config
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// resourcePath returns the CalDAV path of the event's resource: the href the
+// server reported when available, otherwise the conventional UID.ics name. An
+// href must lie inside the calendar so a request can't redirect the write.
+func resourcePath(calendarID string, event types.Event) (string, bool) {
+	dir := strings.TrimRight(extractPath(calendarID), "/") + "/"
+	if event.Href == "" {
+		return dir + event.UID + ".ics", true
+	}
+	href := extractPath(event.Href)
+	if !strings.HasPrefix(href, dir) {
+		return "", false
+	}
+	return href, true
+}
+
+func sameETag(a, b string) bool {
+	return strings.TrimPrefix(a, "W/") == strings.TrimPrefix(b, "W/")
 }
 
 func generateUID() string {

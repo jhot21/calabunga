@@ -52,6 +52,34 @@ func (c *Client) Report(path, xmlBody string) ([]byte, error) {
 	return c.do(req, 207)
 }
 
+// Get fetches a single calendar object and returns its body and ETag.
+func (c *Client) Get(path string) ([]byte, string, error) {
+	req, err := c.newRequest("GET", path, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	c.quirks.ModifyRequest(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", err
+	}
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return nil, "", ErrUnauthorized
+	case http.StatusNotFound:
+		return nil, "", ErrNotFound
+	default:
+		return nil, "", fmt.Errorf("GET %s: unexpected status %d", path, resp.StatusCode)
+	}
+	return c.quirks.ModifyResponse(body), resp.Header.Get("ETag"), nil
+}
+
 func (c *Client) Put(path string, ical []byte, ifMatch string) (string, error) {
 	req, err := c.newRequest("PUT", path, ical)
 	if err != nil {
@@ -69,7 +97,7 @@ func (c *Client) Put(path string, ical []byte, ifMatch string) (string, error) {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	c.quirks.ModifyResponse(body)
-	if resp.StatusCode == http.StatusPreconditionFailed {
+	if resp.StatusCode == http.StatusPreconditionFailed || resp.StatusCode == http.StatusPreconditionRequired {
 		return "", ErrConflict
 	}
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {

@@ -12,6 +12,7 @@ type Calendar struct {
 type Event struct {
 	UID         string      `json:"uid"`
 	CalendarID  string      `json:"calendarId"`
+	Href        string      `json:"href,omitempty"` // resource path on the CalDAV server
 	ETag        string      `json:"etag"`
 	Title       string      `json:"title"`
 	Start       time.Time   `json:"start"`
