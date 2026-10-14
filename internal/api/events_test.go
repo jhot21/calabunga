@@ -412,3 +412,27 @@ func TestCreateEvent_WritesTheRecurrenceRule(t *testing.T) {
 	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 	assert.Contains(t, putBody, "RRULE:FREQ=WEEKLY;BYDAY=WE")
 }
+
+func TestUpdateEvent_ChangesAlarms(t *testing.T) {
+	us := newUpdateServer(t, "/dav/alice/personal/event1@example.com.ics", `"etag-1"`)
+	ev := updateEvent()
+	ev.Alarms = []int{5, 1440}
+
+	w := doUpdate(t, us, ev)
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Contains(t, us.gotBody, "TRIGGER:-PT5M")
+	assert.Contains(t, us.gotBody, "TRIGGER:-P1D")
+	assert.NotContains(t, us.gotBody, "TRIGGER:-PT15M", "the stored 15 minute alarm was replaced")
+}
+
+func TestUpdateEvent_InvalidAlarmIsABadRequest(t *testing.T) {
+	us := newUpdateServer(t, "/dav/alice/personal/event1@example.com.ics", `"etag-1"`)
+	ev := updateEvent()
+	ev.Alarms = []int{-10}
+
+	w := doUpdate(t, us, ev)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, 0, us.putCount)
+}

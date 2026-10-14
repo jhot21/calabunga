@@ -21,6 +21,10 @@ type Event struct {
 	Description string      `json:"description"`
 	Location    string      `json:"location"`
 	Recurrence  *Recurrence `json:"recurrence,omitempty"`
+	// Alarms are notifications, as minutes before the start. Always present on
+	// reads. On writes, nil means "leave the stored alarms alone" and an empty
+	// list removes them.
+	Alarms []int `json:"alarms"`
 	// RecurrenceID is set on an occurrence that was modified on its own (an
 	// override VEVENT). It identifies the original slot it replaced.
 	RecurrenceID string `json:"recurrenceId,omitempty"`

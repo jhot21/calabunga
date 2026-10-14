@@ -8,6 +8,7 @@ It is a single Go binary with the React frontend embedded, and it keeps no datab
 
 - Month and week views, with a mini-calendar and per-calendar show/hide
 - Create, edit, and delete events, including all-day and recurring events
+- Per-event notifications ("10 minutes before", "1 day before", ...), stored as standard `VALARM`s. Your phone or desktop calendar app delivers them; calabunga itself does not send notifications.
 - Optimistic updates, with conflict detection when an event changed on the server (ETags)
 - Calendars and events appear instantly on reload from a local cache, then refresh in the background
 - Light, dark, and system themes

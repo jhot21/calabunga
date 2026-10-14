@@ -157,7 +157,7 @@ func handleCreateEvent(w http.ResponseWriter, r *http.Request, cfg config.Config
 	}
 
 	ical, err := caldav.EventToVCalendar(event)
-	if errors.Is(err, caldav.ErrInvalidRecurrence) {
+	if isInvalidInput(err) {
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
@@ -237,7 +237,7 @@ func handleUpdateEvent(w http.ResponseWriter, r *http.Request, cfg config.Config
 			writeError(w, http.StatusNotImplemented, "not_implemented", err.Error())
 			return
 		}
-		if errors.Is(err, caldav.ErrInvalidRecurrence) {
+		if isInvalidInput(err) {
 			writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 			return
 		}
@@ -318,6 +318,11 @@ func resourcePath(calendarID string, event types.Event) (string, bool) {
 		return "", false
 	}
 	return href, true
+}
+
+// isInvalidInput reports errors caused by what the client sent, not by a fault.
+func isInvalidInput(err error) bool {
+	return errors.Is(err, caldav.ErrInvalidRecurrence) || errors.Is(err, caldav.ErrInvalidAlarm)
 }
 
 func sameETag(a, b string) bool {

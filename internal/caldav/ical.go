@@ -170,6 +170,8 @@ func vEventToEvent(comp *ical.Component, calendarID, etag string) (types.Event, 
 		e.Location = loc.Value
 	}
 
+	e.Alarms = alarmsOf(comp)
+
 	if rr := comp.Props.Get(ical.PropRecurrenceRule); rr != nil {
 		if rec, ok := ParseRRule(rr.Value); ok {
 			e.Recurrence = &rec
@@ -244,6 +246,14 @@ func EventToVCalendar(e types.Event) ([]byte, error) {
 			return nil, err
 		}
 		ev.Props.Set(rruleProp(rule))
+	}
+
+	alarms, err := normalizeAlarms(e.Alarms)
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range alarms {
+		ev.Children = append(ev.Children, newAlarm(m, e.Title))
 	}
 
 	cal.Children = append(cal.Children, ev.Component)

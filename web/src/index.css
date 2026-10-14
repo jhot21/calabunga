@@ -435,6 +435,9 @@ a { color: inherit; text-decoration: none; }
   padding: 8px 12px; background: var(--bg); outline: none; cursor: pointer;
 }
 .modal-select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(26,115,232,.15); }
+.modal-alarm-row { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; }
+.modal-alarm-row .modal-select { flex: 1; }
+.modal-btn.modal-alarm-add { padding-left: 0; }
 .modal-recurrence-section { border: 1px solid var(--border); border-radius: 4px; padding: 12px; margin-bottom: 16px; }
 .modal-recurrence-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
 .modal-byday-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }

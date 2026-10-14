@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { MdClose } from 'react-icons/md'
 import { toDatetimeLocal, fromDatetimeLocal, toDateLocal } from '../../lib/dateUtils'
 import { defaultRecurrence, WEEK_DAY_LABELS, FREQUENCIES } from '../../lib/rrule'
+import { ALARM_PRESETS, MAX_ALARMS, alarmLabel, nextAlarm } from '../../lib/alarms'
 import type { Event, Calendar, EditScope, Recurrence } from '../../types/api'
 
 interface EventModalProps {
@@ -21,6 +22,7 @@ function blankEvent(calendars: Calendar[], initialDate?: Date): Event {
   return {
     uid: '', calendarId: calendars[0]?.id ?? '', etag: '',
     title: '', start: start.toISOString(), end: end.toISOString(), allDay: false,
+    alarms: [], // no default notifications
   }
 }
 
@@ -43,6 +45,12 @@ export default function EventModal({
     const next = cur.includes(day) ? cur.filter((d) => d !== day) : [...cur, day]
     setRec('byDay', next)
   }
+
+  const alarms = form.alarms ?? []
+  const setAlarm = (i: number, minutes: number) =>
+    set('alarms', alarms.map((m, j) => (j === i ? minutes : m)))
+  const removeAlarm = (i: number) => set('alarms', alarms.filter((_, j) => j !== i))
+  const addAlarm = () => set('alarms', [...alarms, nextAlarm(alarms)])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -206,6 +214,31 @@ export default function EventModal({
                 </div>
               </div>
             )}
+
+            <div className="modal-field">
+              <label className="modal-field-label">Notifications</label>
+              {alarms.map((minutes, i) => (
+                <div key={i} className="modal-alarm-row">
+                  <select className="modal-select" aria-label={`Notification ${i + 1}`} value={minutes}
+                    onChange={(e) => setAlarm(i, parseInt(e.target.value))}>
+                    {!ALARM_PRESETS.some((p) => p.minutes === minutes) && (
+                      <option value={minutes}>{alarmLabel(minutes)}</option>
+                    )}
+                    {ALARM_PRESETS.map((p) => (
+                      <option key={p.minutes} value={p.minutes} disabled={alarms.includes(p.minutes) && p.minutes !== minutes}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </select>
+                  <button type="button" className="modal-close" aria-label={`Remove notification ${i + 1}`}
+                    onClick={() => removeAlarm(i)}><MdClose size={18} /></button>
+                </div>
+              ))}
+              <button type="button" className="modal-btn modal-btn-secondary modal-alarm-add"
+                disabled={alarms.length >= MAX_ALARMS} onClick={addAlarm}>
+                Add notification
+              </button>
+            </div>
 
             <div className="modal-field">
               <label className="modal-field-label">Description</label>

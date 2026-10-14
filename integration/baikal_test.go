@@ -416,3 +416,63 @@ END:VCALENDAR`), "")
 	// June 9 was deleted, June 16 moved to June 17 14:00.
 	assert.ElementsMatch(t, []string{"0602T1000", "0623T1000", "0617T1400"}, got)
 }
+
+// Notifications set through calabunga are stored as VALARMs and can be changed.
+func TestBaikal_AlarmsRoundTrip(t *testing.T) {
+	client := caldav.NewClient(baikalURL, testUser, testPass, quirks.Baikal{})
+	home, err := caldav.Discover(client, baikalURL)
+	require.NoError(t, err)
+	calendarPath := home + "default/"
+
+	cfg := config.Config{JWTSecret: "integration-test-secret-32bytes!", JWTMaxTTL: 24 * time.Hour}
+	token, err := auth.Issue(cfg.JWTSecret, auth.Credentials{
+		ServerURL: baikalURL, Username: testUser, Password: testPass, Quirks: "baikal",
+	}, time.Hour, cfg.JWTMaxTTL)
+	require.NoError(t, err)
+	serve := func(req *http.Request) *httptest.ResponseRecorder {
+		req.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		api.JWTMiddleware(cfg)(api.NewEventsHandler(cfg)).ServeHTTP(w, req)
+		return w
+	}
+
+	start := time.Date(2026, 6, 12, 9, 0, 0, 0, time.UTC)
+	body, _ := json.Marshal(types.Event{
+		UID: "alarms-roundtrip@calabunga", CalendarID: calendarPath, Title: "Flight",
+		Start: start, End: start.Add(time.Hour), Alarms: []int{10, 1440},
+	})
+	w := serve(httptest.NewRequest("POST", "/api/events", strings.NewReader(string(body))))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	var made types.Event
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &made))
+	defer client.Delete(made.Href, "")
+
+	list := func() types.Event {
+		w := serve(httptest.NewRequest("GET", "/api/events?calendarId="+calendarPath+"&start=2026-06-01T00:00:00Z&end=2026-07-01T00:00:00Z", nil))
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		var all []types.Event
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &all))
+		for _, e := range all {
+			if e.UID == "alarms-roundtrip@calabunga" {
+				return e
+			}
+		}
+		t.Fatal("event not listed")
+		return types.Event{}
+	}
+
+	ev := list()
+	assert.ElementsMatch(t, []int{10, 1440}, ev.Alarms)
+
+	ev.Alarms = []int{60}
+	body, _ = json.Marshal(ev)
+	w = serve(httptest.NewRequest("PUT", "/api/events/"+ev.UID+"?editScope=all&calendarId="+calendarPath, strings.NewReader(string(body))))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	stored, _, err := client.Get(made.Href)
+	require.NoError(t, err)
+	assert.Contains(t, string(stored), "TRIGGER:-PT1H")
+	assert.NotContains(t, string(stored), "TRIGGER:-PT10M")
+	assert.NotContains(t, string(stored), "TRIGGER:-P1D")
+	assert.Equal(t, []int{60}, list().Alarms)
+}

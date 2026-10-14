@@ -65,6 +65,9 @@ func MergeEvent(existing []byte, e types.Event) ([]byte, error) {
 	if err := mergeRecurrence(master, e); err != nil {
 		return nil, err
 	}
+	if err := mergeAlarms(master, e.Alarms, e.Title); err != nil {
+		return nil, err
+	}
 	master.Props.SetDateTime(ical.PropDateTimeStamp, time.Now().UTC())
 	bumpSequence(master)
 
