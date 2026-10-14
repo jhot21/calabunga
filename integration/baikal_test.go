@@ -476,3 +476,72 @@ func TestBaikal_AlarmsRoundTrip(t *testing.T) {
 	assert.NotContains(t, string(stored), "TRIGGER:-P1D")
 	assert.Equal(t, []int{60}, list().Alarms)
 }
+
+// Commas, semicolons and newlines in text fields must survive list -> edit -> save
+// without gaining escape layers.
+func TestBaikal_TextEscapesRoundTrip(t *testing.T) {
+	client := caldav.NewClient(baikalURL, testUser, testPass, quirks.Baikal{})
+	home, err := caldav.Discover(client, baikalURL)
+	require.NoError(t, err)
+	calendarPath := home + "default/"
+
+	path := calendarPath + "text-escapes.ics"
+	_, err = client.Put(path, []byte(`BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Other Client//EN
+BEGIN:VEVENT
+UID:text-escapes@calabunga
+DTSTAMP:20260601T000000Z
+SUMMARY:Coffee
+LOCATION:Cafe Bluebird\, 524 W Laurel St\, Fort Collins\, CO 80521
+DESCRIPTION:Bring the notes\; ask about the budget\nThen walk
+DTSTART:20260610T100000Z
+DTEND:20260610T110000Z
+END:VEVENT
+END:VCALENDAR`), "")
+	require.NoError(t, err)
+	defer client.Delete(path, "")
+
+	cfg := config.Config{JWTSecret: "integration-test-secret-32bytes!", JWTMaxTTL: 24 * time.Hour}
+	token, err := auth.Issue(cfg.JWTSecret, auth.Credentials{
+		ServerURL: baikalURL, Username: testUser, Password: testPass, Quirks: "baikal",
+	}, time.Hour, cfg.JWTMaxTTL)
+	require.NoError(t, err)
+	serve := func(req *http.Request) *httptest.ResponseRecorder {
+		req.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		api.JWTMiddleware(cfg)(api.NewEventsHandler(cfg)).ServeHTTP(w, req)
+		return w
+	}
+	list := func() types.Event {
+		w := serve(httptest.NewRequest("GET", "/api/events?calendarId="+calendarPath+"&start=2026-06-01T00:00:00Z&end=2026-07-01T00:00:00Z", nil))
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		var all []types.Event
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &all))
+		for _, e := range all {
+			if e.UID == "text-escapes@calabunga" {
+				return e
+			}
+		}
+		t.Fatal("event not listed")
+		return types.Event{}
+	}
+
+	ev := list()
+	assert.Equal(t, "Cafe Bluebird, 524 W Laurel St, Fort Collins, CO 80521", ev.Location)
+	assert.Equal(t, "Bring the notes; ask about the budget\nThen walk", ev.Description)
+
+	for i := 0; i < 3; i++ { // save repeatedly, as a user would
+		ev = list()
+		ev.Title = fmt.Sprintf("Coffee %d", i)
+		body, _ := json.Marshal(ev)
+		w := serve(httptest.NewRequest("PUT", "/api/events/"+ev.UID+"?editScope=all&calendarId="+calendarPath, strings.NewReader(string(body))))
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	}
+
+	stored, _, err := client.Get(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(stored), `LOCATION:Cafe Bluebird\, 524 W Laurel St\, Fort Collins\, CO 80521`)
+	assert.NotContains(t, string(stored), `\\`)
+	assert.Equal(t, "Cafe Bluebird, 524 W Laurel St, Fort Collins, CO 80521", list().Location)
+}

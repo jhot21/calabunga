@@ -261,3 +261,37 @@ END:VCALENDAR`
 	// DST began March 8: 10:00 local is 17:00Z before it and 16:00Z after.
 	assert.Equal(t, []string{"0303T1700", "0310T1600", "0317T1600"}, starts(events))
 }
+
+// TEXT values are escaped on the wire (RFC 5545 3.3.11): \, \; \\ and \n.
+const escapedTextFixture = `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:text@example.com
+SUMMARY:Lunch\, then walk
+DESCRIPTION:Line one\nLine two\; with a \\ backslash
+LOCATION:Cafe Bluebird\, 524 W Laurel St\, Fort Collins\, CO 80521
+DTSTART:20260610T100000Z
+DTEND:20260610T110000Z
+END:VEVENT
+END:VCALENDAR`
+
+func TestParseVCalendar_UnescapesTextValues(t *testing.T) {
+	e := parseOne(t, escapedTextFixture)
+
+	assert.Equal(t, "Lunch, then walk", e.Title)
+	assert.Equal(t, "Line one\nLine two; with a \\ backslash", e.Description)
+	assert.Equal(t, "Cafe Bluebird, 524 W Laurel St, Fort Collins, CO 80521", e.Location)
+}
+
+func TestEventToVCalendar_EscapesTextValuesOnce(t *testing.T) {
+	start := time.Date(2026, 6, 10, 10, 0, 0, 0, time.UTC)
+	out, err := caldav.EventToVCalendar(types.Event{
+		UID: "t@example.com", Title: "Lunch, then walk", Start: start, End: start.Add(time.Hour),
+		Description: "Line one\nLine two; ok", Location: "Cafe Bluebird, 524 W Laurel St",
+	})
+	require.NoError(t, err)
+
+	assert.Contains(t, string(out), `LOCATION:Cafe Bluebird\, 524 W Laurel St`)
+	assert.Contains(t, string(out), `SUMMARY:Lunch\, then walk`)
+	assert.Contains(t, string(out), `DESCRIPTION:Line one\nLine two\; ok`)
+}

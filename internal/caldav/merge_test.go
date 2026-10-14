@@ -348,3 +348,39 @@ func TestMergeEvent_ModifiedOccurrenceCannotBeEditedYet(t *testing.T) {
 	_, err := caldav.MergeEvent([]byte(mergeSeriesFixture), e)
 	assert.ErrorIs(t, err, caldav.ErrUnsupportedChange)
 }
+
+func TestMergeEvent_SavingNeverCompoundsTextEscapes(t *testing.T) {
+	data := []byte(escapedTextFixture)
+	for i := 0; i < 3; i++ { // each save used to add another layer of backslashes
+		e := parseOne(t, string(data))
+		out, err := caldav.MergeEvent(data, e)
+		require.NoError(t, err)
+		data = out
+	}
+
+	assert.Contains(t, string(data), `LOCATION:Cafe Bluebird\, 524 W Laurel St\, Fort Collins\, CO 80521`)
+	assert.NotContains(t, string(data), `\\,`)
+	assert.Equal(t, "Cafe Bluebird, 524 W Laurel St, Fort Collins, CO 80521", parseOne(t, string(data)).Location)
+}
+
+func TestMergeEvent_UnchangedTextKeepsItsParameters(t *testing.T) {
+	fixture := `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Other//EN
+BEGIN:VEVENT
+UID:params@example.com
+SUMMARY;LANGUAGE=en:Dentist
+LOCATION;ALTREP="https://example.com/map":Main St
+DTSTART:20260610T100000Z
+DTEND:20260610T110000Z
+END:VEVENT
+END:VCALENDAR`
+	e := parseOne(t, fixture)
+	e.Description = "added" // change something else
+
+	out, err := caldav.MergeEvent([]byte(fixture), e)
+	require.NoError(t, err)
+
+	assert.Contains(t, string(out), "SUMMARY;LANGUAGE=en:Dentist")
+	assert.Contains(t, string(out), `LOCATION;ALTREP="https://example.com/map":Main St`)
+}

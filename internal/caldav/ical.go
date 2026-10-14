@@ -160,15 +160,9 @@ func vEventToEvent(comp *ical.Component, calendarID, etag string) (types.Event, 
 	if uid := comp.Props.Get(ical.PropUID); uid != nil {
 		e.UID = uid.Value
 	}
-	if sum := comp.Props.Get(ical.PropSummary); sum != nil {
-		e.Title = sum.Value
-	}
-	if desc := comp.Props.Get(ical.PropDescription); desc != nil {
-		e.Description = desc.Value
-	}
-	if loc := comp.Props.Get(ical.PropLocation); loc != nil {
-		e.Location = loc.Value
-	}
+	e.Title = textOf(comp, ical.PropSummary)
+	e.Description = textOf(comp, ical.PropDescription)
+	e.Location = textOf(comp, ical.PropLocation)
 
 	e.Alarms = alarmsOf(comp)
 
@@ -272,4 +266,18 @@ func rruleProp(rule string) *ical.Prop {
 	p := ical.NewProp(ical.PropRecurrenceRule)
 	p.Value = rule
 	return p
+}
+
+// textOf returns a TEXT property's value with its RFC 5545 escapes (\, \; \\ \n)
+// resolved. Prop.Value is the raw wire form, which must never reach the UI or be
+// escaped a second time on save.
+func textOf(comp *ical.Component, name string) string {
+	p := comp.Props.Get(name)
+	if p == nil {
+		return ""
+	}
+	if v, err := p.Text(); err == nil {
+		return v
+	}
+	return p.Value
 }

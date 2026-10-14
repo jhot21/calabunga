@@ -56,9 +56,9 @@ func MergeEvent(existing []byte, e types.Event) ([]byte, error) {
 	// must not move the series start, even if the user is turning repeat off.
 	wasSeries := master.Props.Get(ical.PropRecurrenceRule) != nil
 
-	master.Props.SetText(ical.PropSummary, e.Title)
-	setOptionalText(master, ical.PropDescription, e.Description)
-	setOptionalText(master, ical.PropLocation, e.Location)
+	setText(master, ical.PropSummary, e.Title)
+	setText(master, ical.PropDescription, e.Description)
+	setText(master, ical.PropLocation, e.Location)
 	if err := mergeTimes(master, cur, e, wasSeries); err != nil {
 		return nil, err
 	}
@@ -91,9 +91,15 @@ func findMaster(cal *ical.Calendar, uid string) *ical.Component {
 	return nil
 }
 
-func setOptionalText(comp *ical.Component, name, value string) {
+// setText sets a TEXT property, removing it when empty. A property whose text
+// is unchanged is left exactly as stored, keeping parameters such as LANGUAGE.
+func setText(comp *ical.Component, name, value string) {
+	had := comp.Props.Get(name) != nil
 	if value == "" {
 		comp.Props.Del(name)
+		return
+	}
+	if had && textOf(comp, name) == value {
 		return
 	}
 	comp.Props.SetText(name, value)
