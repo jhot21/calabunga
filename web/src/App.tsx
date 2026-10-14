@@ -2,7 +2,6 @@ import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useAuthStore } from './store/authStore'
 import { useCalendarStore } from './store/calendarStore'
-import { configureApiAuth } from './lib/api'
 import LoginPage from './pages/LoginPage'
 import CalendarPage from './pages/CalendarPage'
 
@@ -14,16 +13,6 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   const theme = useCalendarStore((s) => s.theme)
-
-  useEffect(() => {
-    configureApiAuth(
-      () => useAuthStore.getState().token,
-      (newToken) => {
-        const { expiresAt } = useAuthStore.getState()
-        useAuthStore.getState().setAuth(newToken, expiresAt ?? '')
-      }
-    )
-  }, [])
 
   useEffect(() => {
     const apply = () => {

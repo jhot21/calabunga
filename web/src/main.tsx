@@ -4,7 +4,10 @@ import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from '@ta
 import App from './App'
 import { useAuthStore } from './store/authStore'
 import { ApiError } from './lib/api'
+import { setupApiAuth } from './lib/setupApiAuth'
 import './index.css'
+
+setupApiAuth()
 
 function handleGlobalError(err: unknown) {
   if (err instanceof ApiError && (err.code === 'token_expired' || err.code === 'auth_failed')) {
