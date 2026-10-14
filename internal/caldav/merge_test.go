@@ -1,6 +1,7 @@
 package caldav_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -219,4 +220,123 @@ func TestMergeEvent_UnknownUIDIsAnError(t *testing.T) {
 
 	_, err := caldav.MergeEvent([]byte(mergeTZFixture), e)
 	assert.Error(t, err)
+}
+
+const mergeRichSeriesFixture = `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:rich-uid@example.com
+SUMMARY:Review
+DTSTART:20260602T100000Z
+DTEND:20260602T110000Z
+RRULE:FREQ=MONTHLY;BYDAY=1TU
+EXDATE:20260707T100000Z
+END:VEVENT
+END:VCALENDAR`
+
+func TestMergeEvent_KeepsRuleTheEditorCannotExpress(t *testing.T) {
+	events, err := caldav.ParseVCalendar([]byte(mergeRichSeriesFixture), "c", `"e"`,
+		time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+	require.NotEmpty(t, events)
+	e := events[0]
+	assert.Nil(t, e.Recurrence, "the editor can't show an ordinal weekday rule")
+	e.Title = "Review (renamed)"
+
+	out, err := caldav.MergeEvent([]byte(mergeRichSeriesFixture), e)
+	require.NoError(t, err)
+
+	assert.Contains(t, string(out), "RRULE:FREQ=MONTHLY;BYDAY=1TU")
+	assert.Contains(t, string(out), "EXDATE:20260707T100000Z")
+}
+
+func TestMergeEvent_UnchangedRecurrenceKeepsTheStoredRuleVerbatim(t *testing.T) {
+	e := seriesOccurrence(t)
+	require.NotNil(t, e.Recurrence)
+
+	out, err := caldav.MergeEvent([]byte(mergeSeriesFixture), e)
+	require.NoError(t, err)
+
+	assert.Contains(t, string(out), "RRULE:FREQ=WEEKLY;BYDAY=TU")
+	assert.Equal(t, 1, strings.Count(string(out), "RRULE:"))
+}
+
+func TestMergeEvent_ChangedRecurrenceReplacesTheRule(t *testing.T) {
+	e := seriesOccurrence(t)
+	e.Recurrence = &types.Recurrence{Frequency: "daily", Interval: 2, End: types.RecurrenceEnd{Type: "count", Value: "5"}}
+
+	out, err := caldav.MergeEvent([]byte(mergeSeriesFixture), e)
+	require.NoError(t, err)
+
+	assert.Contains(t, string(out), "RRULE:FREQ=DAILY;INTERVAL=2;COUNT=5")
+	assert.NotContains(t, string(out), "BYDAY=TU")
+	assert.Contains(t, string(out), "TRIGGER:-PT1H")
+}
+
+func TestMergeEvent_UntickingRecurrenceRemovesTheSeriesRules(t *testing.T) {
+	events, err := caldav.ParseVCalendar([]byte(mergeSeriesFixture), "c", `"e"`, time.Time{}, time.Time{})
+	require.NoError(t, err)
+	e := events[0]
+	e.Recurrence = nil // the user unticked "repeat"
+
+	out, err := caldav.MergeEvent([]byte(mergeSeriesFixture), e)
+	require.NoError(t, err)
+
+	assert.NotContains(t, string(out), "RRULE")
+	assert.Contains(t, string(out), "TRIGGER:-PT1H")
+}
+
+func TestMergeEvent_AddsRecurrenceToASingleEvent(t *testing.T) {
+	e := parseOne(t, mergeDurationFixture)
+	e.Recurrence = &types.Recurrence{Frequency: "weekly", Interval: 1, ByDay: []string{"WE"}, End: types.RecurrenceEnd{Type: "never"}}
+
+	out, err := caldav.MergeEvent([]byte(mergeDurationFixture), e)
+	require.NoError(t, err)
+
+	assert.Contains(t, string(out), "RRULE:FREQ=WEEKLY;BYDAY=WE")
+	assert.Contains(t, string(out), "DTSTART:20260603T100000Z")
+}
+
+func TestMergeEvent_AllDayRecurrenceUntilIsADate(t *testing.T) {
+	e := parseOne(t, mergeAllDayFixture)
+	e.Recurrence = &types.Recurrence{Frequency: "daily", Interval: 1, End: types.RecurrenceEnd{Type: "date", Value: "2026-06-30"}}
+
+	out, err := caldav.MergeEvent([]byte(mergeAllDayFixture), e)
+	require.NoError(t, err)
+
+	assert.Contains(t, string(out), "RRULE:FREQ=DAILY;UNTIL=20260630")
+	assert.NotContains(t, string(out), "UNTIL=20260630T")
+}
+
+func TestMergeEvent_InvalidRecurrenceIsRejected(t *testing.T) {
+	e := parseOne(t, mergeDurationFixture)
+	e.Recurrence = &types.Recurrence{Frequency: "hourly", Interval: 1}
+
+	_, err := caldav.MergeEvent([]byte(mergeDurationFixture), e)
+	assert.ErrorIs(t, err, caldav.ErrInvalidRecurrence)
+}
+
+func TestMergeEvent_SeriesTimeChangeUsesTheOpenedOccurrence(t *testing.T) {
+	e := seriesOccurrence(t)
+	orig := e.Start
+	e.Start = e.Start.Add(30 * time.Minute) // same day, half an hour later
+	e.End = e.End.Add(30 * time.Minute)
+	e.OriginalStart = &orig
+
+	out, err := caldav.MergeEvent([]byte(mergeSeriesFixture), e)
+	require.NoError(t, err)
+
+	assert.Contains(t, string(out), "DTSTART:20260602T233000Z")
+	assert.Contains(t, string(out), "DTEND:20260603T000000Z")
+}
+
+func TestMergeEvent_SeriesMovedToAnotherDayIsRefused(t *testing.T) {
+	e := seriesOccurrence(t)
+	orig := e.Start
+	e.Start = e.Start.Add(24 * time.Hour)
+	e.End = e.End.Add(24 * time.Hour)
+	e.OriginalStart = &orig
+
+	_, err := caldav.MergeEvent([]byte(mergeSeriesFixture), e)
+	assert.ErrorIs(t, err, caldav.ErrUnsupportedChange)
 }

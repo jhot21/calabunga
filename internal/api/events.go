@@ -157,6 +157,10 @@ func handleCreateEvent(w http.ResponseWriter, r *http.Request, cfg config.Config
 	}
 
 	ical, err := caldav.EventToVCalendar(event)
+	if errors.Is(err, caldav.ErrInvalidRecurrence) {
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "server_error", "failed to serialize event")
 		return
@@ -233,6 +237,10 @@ func handleUpdateEvent(w http.ResponseWriter, r *http.Request, cfg config.Config
 			writeError(w, http.StatusNotImplemented, "not_implemented", err.Error())
 			return
 		}
+		if errors.Is(err, caldav.ErrInvalidRecurrence) {
+			writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+			return
+		}
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "server_error", "failed to update event")
 			return
@@ -249,6 +257,7 @@ func handleUpdateEvent(w http.ResponseWriter, r *http.Request, cfg config.Config
 		}
 		event.ETag = etag
 		event.Href = path
+		event.OriginalStart = nil
 	case types.EditThis, types.EditThisAndFollowing:
 		writeError(w, http.StatusNotImplemented, "not_implemented",
 			"editing individual occurrences of recurring events is not yet supported")

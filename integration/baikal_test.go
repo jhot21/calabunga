@@ -278,3 +278,86 @@ END:VCALENDAR`), "")
 	assert.Contains(t, got, "X-CUSTOM-FLAG:keepme")
 	assert.Contains(t, got, "DTSTART;TZID=America/Denver:20260610T110000")
 }
+
+// A series created and edited through calabunga must stay a series on the server.
+func TestBaikal_RecurringSeriesRoundTrip(t *testing.T) {
+	client := caldav.NewClient(baikalURL, testUser, testPass, quirks.Baikal{})
+	home, err := caldav.Discover(client, baikalURL)
+	require.NoError(t, err)
+	calendarPath := home + "default/"
+
+	cfg := config.Config{JWTSecret: "integration-test-secret-32bytes!", JWTMaxTTL: 24 * time.Hour}
+	token, err := auth.Issue(cfg.JWTSecret, auth.Credentials{
+		ServerURL: baikalURL, Username: testUser, Password: testPass, Quirks: "baikal",
+	}, time.Hour, cfg.JWTMaxTTL)
+	require.NoError(t, err)
+	serve := func(req *http.Request) *httptest.ResponseRecorder {
+		req.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		api.JWTMiddleware(cfg)(api.NewEventsHandler(cfg)).ServeHTTP(w, req)
+		return w
+	}
+
+	// Create a weekly Wednesday series the way the editor does.
+	start := time.Date(2026, 6, 3, 15, 0, 0, 0, time.UTC) // a Wednesday
+	created := types.Event{
+		UID: "series-roundtrip@calabunga", CalendarID: calendarPath, Title: "Standup",
+		Start: start, End: start.Add(30 * time.Minute),
+		Recurrence: &types.Recurrence{Frequency: "weekly", Interval: 1, ByDay: []string{"WE"}, End: types.RecurrenceEnd{Type: "never"}},
+	}
+	body, _ := json.Marshal(created)
+	w := serve(httptest.NewRequest("POST", "/api/events", strings.NewReader(string(body))))
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	var made types.Event
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &made))
+	defer client.Delete(made.Href, "")
+
+	list := func() []types.Event {
+		w := serve(httptest.NewRequest("GET", "/api/events?calendarId="+calendarPath+"&start=2026-06-01T00:00:00Z&end=2026-07-01T00:00:00Z", nil))
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		var all []types.Event
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &all))
+		var mine []types.Event
+		for _, e := range all {
+			if e.UID == created.UID {
+				mine = append(mine, e)
+			}
+		}
+		return mine
+	}
+
+	occurrences := list()
+	require.Len(t, occurrences, 4, "Wednesdays June 3, 10, 17, 24")
+	require.NotNil(t, occurrences[0].Recurrence)
+
+	// Open the June 17 occurrence, rename it and move it 30 minutes later.
+	opened := occurrences[2]
+	edited := opened
+	edited.Title = "Standup (renamed)"
+	edited.Start = opened.Start.Add(30 * time.Minute)
+	edited.End = opened.End.Add(30 * time.Minute)
+	edited.OriginalStart = &opened.Start
+	body, _ = json.Marshal(edited)
+	w = serve(httptest.NewRequest("PUT", "/api/events/"+edited.UID+"?editScope=all&calendarId="+calendarPath, strings.NewReader(string(body))))
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	stored, _, err := client.Get(made.Href)
+	require.NoError(t, err)
+	assert.Contains(t, string(stored), "RRULE:FREQ=WEEKLY;BYDAY=WE")
+	assert.Contains(t, string(stored), "SUMMARY:Standup (renamed)")
+	assert.Contains(t, string(stored), "DTSTART:20260603T153000Z", "the series start keeps its own date")
+
+	after := list()
+	require.Len(t, after, 4, "still a series of four Wednesdays")
+	assert.Equal(t, time.Date(2026, 6, 17, 15, 30, 0, 0, time.UTC), after[2].Start.UTC())
+
+	// Moving the series to another day is refused rather than corrupting the rule.
+	moved := after[2]
+	origStart := moved.Start
+	moved.Start = moved.Start.Add(24 * time.Hour)
+	moved.End = moved.End.Add(24 * time.Hour)
+	moved.OriginalStart = &origStart
+	body, _ = json.Marshal(moved)
+	w = serve(httptest.NewRequest("PUT", "/api/events/"+moved.UID+"?editScope=all&calendarId="+calendarPath, strings.NewReader(string(body))))
+	assert.Equal(t, http.StatusNotImplemented, w.Code)
+}

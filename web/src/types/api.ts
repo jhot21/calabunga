@@ -31,6 +31,7 @@ export interface Event {
   description?: string;
   location?: string;
   recurrence?: Recurrence;
+  originalStart?: string; // update requests only: start of the occurrence that was opened
 }
 
 export type EditScope = 'this' | 'thisAndFollowing' | 'all';

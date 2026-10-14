@@ -49,7 +49,7 @@ export default function CalendarPage() {
   }, [])
 
   const handleSave = (ev: Event, scope: EditScope) => {
-    if (ev.uid) updateEvent.mutate({ event: ev, scope })
+    if (ev.uid) updateEvent.mutate({ event: ev, scope, originalStart: modalEvent?.start })
     else createEvent.mutate(ev)
   }
 

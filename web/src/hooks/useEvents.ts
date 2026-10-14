@@ -1,6 +1,7 @@
 import { useQueries, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '../lib/api'
 import { useUIStore } from '../store/uiStore'
+import { applyEdit } from '../lib/eventCache'
 import type { Event, EditScope } from '../types/api'
 
 export function useAllEvents(calendarIds: string[], start: Date, end: Date) {
@@ -52,14 +53,14 @@ export function useUpdateEvent() {
   const addToast = useUIStore((s) => s.addToast)
 
   return useMutation({
-    mutationFn: ({ event, scope }: { event: Event; scope: EditScope }) =>
-      api.updateEvent(event.uid, event, scope, event.calendarId),
-    onMutate: async ({ event }) => {
+    mutationFn: ({ event, scope, originalStart }: { event: Event; scope: EditScope; originalStart?: string }) =>
+      api.updateEvent(event.uid, { ...event, originalStart }, scope, event.calendarId),
+    onMutate: async ({ event, originalStart }) => {
       await queryClient.cancelQueries({ queryKey: ['events', event.calendarId] })
       const snapshots = queryClient.getQueriesData<Event[]>({ queryKey: ['events', event.calendarId] })
       queryClient.setQueriesData<Event[]>(
         { queryKey: ['events', event.calendarId] },
-        (old) => (old ?? []).map((e) => (e.uid === event.uid ? event : e))
+        (old) => applyEdit(old, event, originalStart)
       )
       return { snapshots }
     },

@@ -92,6 +92,12 @@ func vEventToEvent(comp *ical.Component, calendarID, etag string) (types.Event, 
 		e.Location = loc.Value
 	}
 
+	if rr := comp.Props.Get(ical.PropRecurrenceRule); rr != nil {
+		if rec, ok := ParseRRule(rr.Value); ok {
+			e.Recurrence = &rec
+		}
+	}
+
 	dtstart := comp.Props.Get(ical.PropDateTimeStart)
 	if dtstart == nil {
 		return e, fmt.Errorf("event %s missing DTSTART", e.UID)
@@ -154,6 +160,14 @@ func EventToVCalendar(e types.Event) ([]byte, error) {
 		ev.Props.SetDateTime(ical.PropDateTimeEnd, e.End)
 	}
 
+	if e.Recurrence != nil {
+		rule, err := RecurrenceToRRuleFor(*e.Recurrence, e.AllDay)
+		if err != nil {
+			return nil, err
+		}
+		ev.Props.Set(rruleProp(rule))
+	}
+
 	cal.Children = append(cal.Children, ev.Component)
 
 	var buf bytes.Buffer
@@ -162,4 +176,12 @@ func EventToVCalendar(e types.Event) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// rruleProp builds an RRULE property. The value is a rule, not text, so it must
+// not go through SetText's escaping.
+func rruleProp(rule string) *ical.Prop {
+	p := ical.NewProp(ical.PropRecurrenceRule)
+	p.Value = rule
+	return p
 }

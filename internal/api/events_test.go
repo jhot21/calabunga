@@ -186,6 +186,7 @@ END:VEVENT
 END:VCALENDAR`
 
 type updateServer struct {
+	fixture  string // calendar object served on GET; defaults to updateFixture
 	srv      *httptest.Server
 	gotPath  string
 	gotMatch string
@@ -196,7 +197,7 @@ type updateServer struct {
 // newUpdateServer serves updateFixture at resourcePath with the given ETag and records the PUT.
 func newUpdateServer(t *testing.T, resourcePath, etag string) *updateServer {
 	t.Helper()
-	us := &updateServer{}
+	us := &updateServer{fixture: updateFixture}
 	us.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case "OPTIONS":
@@ -208,7 +209,7 @@ func newUpdateServer(t *testing.T, resourcePath, etag string) *updateServer {
 			}
 			w.Header().Set("ETag", etag)
 			w.Header().Set("Content-Type", "text/calendar")
-			w.Write([]byte(updateFixture))
+			w.Write([]byte(us.fixture))
 		case "PUT":
 			b, _ := io.ReadAll(r.Body)
 			us.putCount++
@@ -321,4 +322,93 @@ func TestGetEvents_ReturnsResourceHref(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &events))
 	require.Len(t, events, 1)
 	assert.Equal(t, "/dav/alice/personal/event1.ics", events[0].Href)
+}
+
+const seriesUpdateFixture = `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:event1@example.com
+SUMMARY:Team standup
+DTSTART:20260602T100000Z
+DTEND:20260602T103000Z
+RRULE:FREQ=WEEKLY;BYDAY=TU
+END:VEVENT
+END:VCALENDAR`
+
+func seriesEdit(us *updateServer, start time.Time, original time.Time) types.Event {
+	us.fixture = seriesUpdateFixture
+	ev := updateEvent()
+	ev.Start, ev.End = start, start.Add(30*time.Minute)
+	ev.OriginalStart = &original
+	ev.Recurrence = &types.Recurrence{Frequency: "weekly", Interval: 1, ByDay: []string{"TU"}, End: types.RecurrenceEnd{Type: "never"}}
+	return ev
+}
+
+func TestUpdateEvent_SeriesTimeChangeKeepsTheRule(t *testing.T) {
+	us := newUpdateServer(t, "/dav/alice/personal/event1@example.com.ics", `"etag-1"`)
+	opened := time.Date(2026, 6, 16, 10, 0, 0, 0, time.UTC)
+
+	w := doUpdate(t, us, seriesEdit(us, opened.Add(time.Hour), opened))
+
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Contains(t, us.gotBody, "RRULE:FREQ=WEEKLY;BYDAY=TU")
+	assert.Contains(t, us.gotBody, "DTSTART:20260602T110000Z")
+	assert.NotContains(t, w.Body.String(), "originalStart", "the request-only field must not be echoed back")
+}
+
+func TestUpdateEvent_SeriesMovedToAnotherDayIsNotImplemented(t *testing.T) {
+	us := newUpdateServer(t, "/dav/alice/personal/event1@example.com.ics", `"etag-1"`)
+	opened := time.Date(2026, 6, 16, 10, 0, 0, 0, time.UTC)
+
+	w := doUpdate(t, us, seriesEdit(us, opened.Add(24*time.Hour), opened))
+
+	assert.Equal(t, http.StatusNotImplemented, w.Code)
+	assert.Equal(t, 0, us.putCount)
+}
+
+func TestUpdateEvent_InvalidRecurrenceIsABadRequest(t *testing.T) {
+	us := newUpdateServer(t, "/dav/alice/personal/event1@example.com.ics", `"etag-1"`)
+	ev := updateEvent()
+	ev.Recurrence = &types.Recurrence{Frequency: "hourly", Interval: 1}
+
+	w := doUpdate(t, us, ev)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, 0, us.putCount)
+}
+
+func TestCreateEvent_WritesTheRecurrenceRule(t *testing.T) {
+	var putBody string
+	caldavSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case "OPTIONS":
+			w.WriteHeader(200)
+		case "PUT":
+			b, _ := io.ReadAll(r.Body)
+			putBody = string(b)
+			w.WriteHeader(201)
+		}
+	}))
+	defer caldavSrv.Close()
+
+	cfg := config.Config{JWTSecret: "testsecret12345678901234567890ab", JWTMaxTTL: 720 * time.Hour}
+	creds := auth.Credentials{ServerURL: caldavSrv.URL, Username: "alice", Password: "pass", Quirks: "noop"}
+	token, _ := auth.Issue(cfg.JWTSecret, creds, 24*time.Hour, cfg.JWTMaxTTL)
+
+	event := types.Event{
+		CalendarID: caldavSrv.URL + "/dav/alice/personal/",
+		Title:      "Standup",
+		Start:      time.Date(2026, 6, 10, 14, 0, 0, 0, time.UTC),
+		End:        time.Date(2026, 6, 10, 15, 0, 0, 0, time.UTC),
+		Recurrence: &types.Recurrence{Frequency: "weekly", Interval: 1, ByDay: []string{"WE"}, End: types.RecurrenceEnd{Type: "never"}},
+	}
+	body, _ := json.Marshal(event)
+	req := httptest.NewRequest("POST", "/api/events", strings.NewReader(string(body)))
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+
+	api.JWTMiddleware(cfg)(api.NewEventsHandler(cfg)).ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	assert.Contains(t, putBody, "RRULE:FREQ=WEEKLY;BYDAY=WE")
 }

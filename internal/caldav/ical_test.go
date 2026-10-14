@@ -99,3 +99,46 @@ func TestEventToVCalendar(t *testing.T) {
 	assert.Contains(t, string(ical), "SUMMARY:Team standup")
 	assert.Contains(t, string(ical), "DTSTART:20260603T100000Z")
 }
+
+const recurringVEvent = `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:series@example.com
+SUMMARY:Standup
+DTSTART:20260602T100000Z
+DTEND:20260602T103000Z
+RRULE:FREQ=WEEKLY;BYDAY=TU
+END:VEVENT
+END:VCALENDAR`
+
+func TestParseVCalendar_RecurringEventsCarryTheirRule(t *testing.T) {
+	events, err := caldav.ParseVCalendar([]byte(recurringVEvent), "cal-1", `"e"`,
+		time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+	require.Greater(t, len(events), 1)
+	for _, e := range events {
+		require.NotNil(t, e.Recurrence)
+		assert.Equal(t, "weekly", e.Recurrence.Frequency)
+		assert.Equal(t, []string{"TU"}, e.Recurrence.ByDay)
+	}
+}
+
+func TestEventToVCalendar_WritesRecurrenceFromUI(t *testing.T) {
+	start := time.Date(2026, 6, 3, 10, 0, 0, 0, time.UTC)
+	out, err := caldav.EventToVCalendar(types.Event{
+		UID: "new@example.com", Title: "Standup", Start: start, End: start.Add(time.Hour),
+		Recurrence: &types.Recurrence{Frequency: "weekly", Interval: 1, ByDay: []string{"WE"}, End: types.RecurrenceEnd{Type: "never"}},
+	})
+	require.NoError(t, err)
+
+	assert.Contains(t, string(out), "RRULE:FREQ=WEEKLY;BYDAY=WE")
+}
+
+func TestEventToVCalendar_RejectsAnInvalidRecurrence(t *testing.T) {
+	start := time.Date(2026, 6, 3, 10, 0, 0, 0, time.UTC)
+	_, err := caldav.EventToVCalendar(types.Event{
+		UID: "new@example.com", Title: "x", Start: start, End: start.Add(time.Hour),
+		Recurrence: &types.Recurrence{Frequency: "hourly", Interval: 1},
+	})
+	assert.ErrorIs(t, err, caldav.ErrInvalidRecurrence)
+}

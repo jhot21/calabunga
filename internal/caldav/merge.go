@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"reflect"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"calabunga/internal/types"
@@ -43,10 +46,17 @@ func MergeEvent(existing []byte, e types.Event) ([]byte, error) {
 		return nil, err
 	}
 
+	// Decided before the rule is touched: an edit from an occurrence of a series
+	// must not move the series start, even if the user is turning repeat off.
+	wasSeries := master.Props.Get(ical.PropRecurrenceRule) != nil
+
 	master.Props.SetText(ical.PropSummary, e.Title)
 	setOptionalText(master, ical.PropDescription, e.Description)
 	setOptionalText(master, ical.PropLocation, e.Location)
-	if err := mergeTimes(master, cur, e); err != nil {
+	if err := mergeTimes(master, cur, e, wasSeries); err != nil {
+		return nil, err
+	}
+	if err := mergeRecurrence(master, e); err != nil {
 		return nil, err
 	}
 	master.Props.SetDateTime(ical.PropDateTimeStamp, time.Now().UTC())
@@ -80,14 +90,14 @@ func setOptionalText(comp *ical.Component, name, value string) {
 	comp.Props.SetText(name, value)
 }
 
-func mergeTimes(master *ical.Component, cur, e types.Event) error {
+func mergeTimes(master *ical.Component, cur, e types.Event, wasSeries bool) error {
 	if cur.AllDay == e.AllDay && cur.Start.Equal(e.Start) && cur.End.Equal(e.End) {
 		return nil // untouched: keeps TZID, DURATION, and VALUE=DATE exactly as stored
 	}
 
 	start, end := e.Start, e.End
 
-	if master.Props.Get("RRULE") != nil {
+	if wasSeries {
 		// The editor hands back one expanded occurrence, not the series start.
 		// Taking its date would collapse the series onto that day, so only the
 		// time of day and the length are applied, on the series' own start date.
@@ -95,18 +105,31 @@ func mergeTimes(master *ical.Component, cur, e types.Event) error {
 			return ErrUnsupportedChange
 		}
 		dur := e.End.Sub(e.Start)
-		if e.AllDay {
-			start, end = cur.Start, cur.Start.Add(dur)
-		} else {
-			loc := cur.Start.Location()
-			es := e.Start.In(loc)
-			if dur == cur.End.Sub(cur.Start) && es.Hour() == cur.Start.Hour() &&
-				es.Minute() == cur.Start.Minute() && es.Second() == cur.Start.Second() {
-				return nil
+		loc := cur.Start.Location()
+
+		var shift time.Duration // wall-clock change within the day
+		if e.OriginalStart != nil {
+			o, n := e.OriginalStart.In(loc), e.Start.In(loc)
+			if o.Year() != n.Year() || o.YearDay() != n.YearDay() {
+				// Moving a series to another day would leave DTSTART out of
+				// step with BYDAY/BYMONTHDAY.
+				return ErrUnsupportedChange
 			}
-			start = time.Date(cur.Start.Year(), cur.Start.Month(), cur.Start.Day(), es.Hour(), es.Minute(), es.Second(), 0, loc)
-			end = start.Add(dur)
+			shift = wall(n).Sub(wall(o))
+		} else {
+			es := e.Start.In(loc)
+			shift = wall(es).Sub(wall(time.Date(es.Year(), es.Month(), es.Day(), cur.Start.Hour(), cur.Start.Minute(), cur.Start.Second(), 0, loc)))
 		}
+		if e.AllDay {
+			shift = 0
+		}
+
+		if shift == 0 && dur == cur.End.Sub(cur.Start) {
+			return nil
+		}
+		w := wall(cur.Start).Add(shift)
+		start = time.Date(w.Year(), w.Month(), w.Day(), w.Hour(), w.Minute(), w.Second(), 0, loc)
+		end = start.Add(dur)
 	}
 
 	if e.AllDay {
@@ -120,6 +143,61 @@ func mergeTimes(master *ical.Component, cur, e types.Event) error {
 	}
 	master.Props.Del(ical.PropDuration)
 	return nil
+}
+
+// wall returns t's wall-clock fields as a UTC time, so differences between two
+// times ignore their zone offsets (and DST changes between them).
+func wall(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), 0, time.UTC)
+}
+
+// mergeRecurrence applies the editor's recurrence. A stored rule the editor
+// can't express is left alone unless the user sets a new one.
+func mergeRecurrence(master *ical.Component, e types.Event) error {
+	existing := master.Props.Get(ical.PropRecurrenceRule)
+
+	if e.Recurrence == nil {
+		if existing == nil {
+			return nil
+		}
+		if _, ok := ParseRRule(existing.Value); !ok {
+			return nil // the editor couldn't show it, so it wasn't removed on purpose
+		}
+		master.Props.Del(ical.PropRecurrenceRule)
+		master.Props.Del(ical.PropExceptionDates)
+		master.Props.Del(ical.PropRecurrenceDates)
+		return nil
+	}
+
+	rule, err := RecurrenceToRRuleFor(*e.Recurrence, e.AllDay)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		if stored, ok := ParseRRule(existing.Value); ok && sameRecurrence(stored, *e.Recurrence) {
+			return nil // unchanged: keep the stored text exactly
+		}
+	}
+	master.Props.Set(rruleProp(rule))
+	return nil
+}
+
+func sameRecurrence(a, b types.Recurrence) bool {
+	norm := func(r types.Recurrence) types.Recurrence {
+		if r.Interval < 1 {
+			r.Interval = 1
+		}
+		if r.End.Type == "" {
+			r.End.Type = "never"
+		}
+		r.Frequency = strings.ToLower(r.Frequency)
+		r.ByDay = append([]string(nil), r.ByDay...)
+		sort.Strings(r.ByDay)
+		r.ByMonthDay = append([]int(nil), r.ByMonthDay...)
+		sort.Ints(r.ByMonthDay)
+		return r
+	}
+	return reflect.DeepEqual(norm(a), norm(b))
 }
 
 func bumpSequence(comp *ical.Component) {

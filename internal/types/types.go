@@ -21,6 +21,9 @@ type Event struct {
 	Description string      `json:"description"`
 	Location    string      `json:"location"`
 	Recurrence  *Recurrence `json:"recurrence,omitempty"`
+	// OriginalStart is, on update requests only, the start of the occurrence the
+	// user opened. It lets the server tell a time change from moving to another day.
+	OriginalStart *time.Time `json:"originalStart,omitempty"`
 }
 
 type Recurrence struct {

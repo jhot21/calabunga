@@ -13,7 +13,13 @@ It is a single Go binary with the React frontend embedded, and it keeps no datab
 - Light, dark, and system themes
 - Works with standard CalDAV servers; [Baikal](https://sabre.io/baikal/) is auto-detected and handled
 
-Not yet supported: editing a single occurrence of a recurring event (or "this and following"). Editing the whole series works.
+Edits are written in place, so alarms, attendees, and other data stored by other clients survive a save in calabunga.
+
+Not yet supported on recurring events:
+
+- Editing or deleting a single occurrence, or "this and following". Editing the whole series works, and deleting one occurrence is refused rather than deleting the series.
+- Moving a whole series to a different day. Changing its time or length works.
+- Recurrence rules the editor can't express (such as "first Tuesday of the month") are shown as one-off events but are kept as stored when you edit the event.
 
 ## How it works
 

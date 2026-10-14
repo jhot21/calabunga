@@ -5,7 +5,7 @@ import { useAuthStore } from '../store/authStore'
 export const PERSIST_KEY = 'calabunga-query-cache'
 export const PERSIST_MAX_AGE = 24 * 60 * 60 * 1000
 // Bump to discard caches written by an incompatible shape of the API types.
-export const PERSIST_BUSTER = 'v2'
+export const PERSIST_BUSTER = 'v3'
 
 const PERSISTED_ROOTS = new Set(['calendars', 'events'])
 
