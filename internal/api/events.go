@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -126,6 +127,7 @@ func parseEventReport(xmlBody []byte, calendarID string, rangeStart, rangeEnd ti
 		}
 		events, err := caldav.ParseVCalendar([]byte(strings.TrimSpace(r.Propstat.CalendarData)), calendarID, r.Propstat.ETag, rangeStart, rangeEnd)
 		if err != nil {
+			log.Printf("skipping event %s: %v", r.Href, err)
 			continue
 		}
 		all = append(all, events...)

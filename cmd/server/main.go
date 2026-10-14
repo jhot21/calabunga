@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"net/http"
+	_ "time/tzdata" // the scratch image has no zoneinfo; needed to resolve iCal TZIDs
 
 	"calabunga/internal/api"
 	"calabunga/internal/config"
