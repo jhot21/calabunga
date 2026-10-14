@@ -15,6 +15,8 @@ export function useAuth() {
   const connectMutation = useMutation({
     mutationFn: (req: ConnectRequest) => api.connect(req),
     onSuccess: (data, req) => {
+      // A new login may be a different account or server; never show the old one's events.
+      queryClient.clear()
       localStorage.setItem('caldav_url', req.url)
       localStorage.setItem('caldav_username', req.username)
       setAuth(data.token, data.expiresAt)
