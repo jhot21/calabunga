@@ -1,0 +1,82 @@
+version: "3"
+
+includes:
+  git:
+    taskfile: https://raw.githubusercontent.com/jhot21/taskfiles/main/git.yaml
+    flatten: false
+  go:
+    taskfile: https://raw.githubusercontent.com/jhot21/taskfiles/main/go.yaml
+    flatten: false
+  os:
+    taskfile: Taskfile_{{OS}}.yml
+    flatten: true
+    optional: true
+
+tasks:
+  build:web:
+    desc: Build the React frontend
+    sources:
+      - web/src/**
+      - web/public/**
+      - web/index.html
+      - web/package.json
+      - web/package-lock.json
+      - web/vite.config.ts
+      - web/tsconfig.json
+      - web/tsconfig.node.json
+    generates:
+      - web/dist/**
+    cmds:
+      - npm --prefix web ci
+      - npm --prefix web run build
+
+  build:
+    desc: Build the Go server binary (embeds frontend)
+    deps: [build:web]
+    sources:
+      - "**/*.go"
+      - go.mod
+      - go.sum
+      - web/dist/**
+    generates:
+      - bin/calabunga
+    cmds:
+      - go build -o bin/calabunga ./cmd/server
+
+  test:
+    desc: Run unit tests
+    cmds:
+      - go test ./...
+
+  test:integration:
+    desc: Run integration tests (requires Docker)
+    cmds:
+      - go test -tags integration ./integration/...
+
+  run:
+    desc: Build and run the server
+    deps: [build]
+    cmds:
+      - ./bin/calabunga
+
+  _dev:server:
+    internal: true
+    cmds:
+      - go run ./cmd/server
+
+  _dev:web:
+    internal: true
+    cmds:
+      - npm --prefix web run dev
+
+  dev:
+    desc: Start Go server and Vite dev server concurrently
+    deps:
+      - _dev:server
+      - _dev:web
+
+  ci:
+    desc: Run tests then build
+    cmds:
+      - task: test
+      - task: build

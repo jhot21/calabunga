@@ -5,3 +5,5 @@ web/node_modules/
 web/dist/*
 !web/dist/.gitkeep
 .env
+.task/
+Taskfile_darwin.yml
