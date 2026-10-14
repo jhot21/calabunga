@@ -36,6 +36,12 @@ func MergeEvent(existing []byte, e types.Event) ([]byte, error) {
 		cal.Props.SetText(ical.PropProductID, "-//Calabunga//EN")
 	}
 
+	if e.RecurrenceID != "" {
+		// A modified occurrence is its own VEVENT; applying its fields to the
+		// series would rewrite every other occurrence.
+		return nil, ErrUnsupportedChange
+	}
+
 	master := findMaster(cal, e.UID)
 	if master == nil {
 		return nil, fmt.Errorf("no VEVENT with UID %q in calendar object", e.UID)

@@ -340,3 +340,11 @@ func TestMergeEvent_SeriesMovedToAnotherDayIsRefused(t *testing.T) {
 	_, err := caldav.MergeEvent([]byte(mergeSeriesFixture), e)
 	assert.ErrorIs(t, err, caldav.ErrUnsupportedChange)
 }
+
+func TestMergeEvent_ModifiedOccurrenceCannotBeEditedYet(t *testing.T) {
+	e := parseOne(t, mergeSeriesFixture)
+	e.RecurrenceID = "20260616T230000Z"
+
+	_, err := caldav.MergeEvent([]byte(mergeSeriesFixture), e)
+	assert.ErrorIs(t, err, caldav.ErrUnsupportedChange)
+}

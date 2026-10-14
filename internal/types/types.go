@@ -21,6 +21,9 @@ type Event struct {
 	Description string      `json:"description"`
 	Location    string      `json:"location"`
 	Recurrence  *Recurrence `json:"recurrence,omitempty"`
+	// RecurrenceID is set on an occurrence that was modified on its own (an
+	// override VEVENT). It identifies the original slot it replaced.
+	RecurrenceID string `json:"recurrenceId,omitempty"`
 	// OriginalStart is, on update requests only, the start of the occurrence the
 	// user opened. It lets the server tell a time change from moving to another day.
 	OriginalStart *time.Time `json:"originalStart,omitempty"`

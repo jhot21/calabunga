@@ -3,6 +3,7 @@ package caldav
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"time"
 
 	ical "github.com/emersion/go-ical"
@@ -20,47 +21,98 @@ func ParseVCalendar(data []byte, calendarID, etag string, rangeStart, rangeEnd t
 		return nil, fmt.Errorf("parse ical: %w", err)
 	}
 
-	var events []types.Event
+	// A resource holds one master VEVENT plus an override VEVENT (sharing its
+	// UID, carrying RECURRENCE-ID) for each occurrence modified on its own.
+	var masters, overrides []*ical.Component
+	replaced := map[string][]time.Time{} // UID -> original slots taken over by overrides
 	for _, child := range cal.Children {
 		if child.Name != ical.CompEvent {
 			continue
 		}
-		expanded, err := expandVEvent(child, calendarID, etag, rangeStart, rangeEnd)
+		rid := child.Props.Get(ical.PropRecurrenceID)
+		if rid == nil {
+			masters = append(masters, child)
+			continue
+		}
+		overrides = append(overrides, child)
+		if uid := child.Props.Get(ical.PropUID); uid != nil {
+			if ts := parseDateValues(rid); len(ts) > 0 {
+				replaced[uid.Value] = append(replaced[uid.Value], ts[0])
+			}
+		}
+	}
+
+	var events []types.Event
+	for _, child := range masters {
+		uid := ""
+		if p := child.Props.Get(ical.PropUID); p != nil {
+			uid = p.Value
+		}
+		expanded, err := expandVEvent(child, calendarID, etag, rangeStart, rangeEnd, replaced[uid])
 		if err != nil {
 			return nil, err
 		}
 		events = append(events, expanded...)
 	}
+	for _, child := range overrides {
+		ev, err := vEventToEvent(child, calendarID, etag)
+		if err != nil {
+			return nil, err
+		}
+		ev.RecurrenceID = child.Props.Get(ical.PropRecurrenceID).Value
+		if !rangeStart.IsZero() && !rangeEnd.IsZero() && (!ev.Start.Before(rangeEnd) || ev.End.Before(rangeStart)) {
+			continue
+		}
+		events = append(events, ev)
+	}
 	return events, nil
 }
 
-func expandVEvent(comp *ical.Component, calendarID, etag string, rangeStart, rangeEnd time.Time) ([]types.Event, error) {
+func expandVEvent(comp *ical.Component, calendarID, etag string, rangeStart, rangeEnd time.Time, replaced []time.Time) ([]types.Event, error) {
 	base, err := vEventToEvent(comp, calendarID, etag)
 	if err != nil {
 		return nil, err
 	}
 
 	rruleProp := comp.Props.Get("RRULE")
-	if rruleProp == nil || rangeStart.IsZero() || rangeEnd.IsZero() {
+	rdates := collectDates(comp, ical.PropRecurrenceDates)
+	if (rruleProp == nil && len(rdates) == 0) || rangeStart.IsZero() || rangeEnd.IsZero() {
 		return []types.Event{base}, nil
 	}
 
 	duration := base.End.Sub(base.Start)
 
-	// Build the DTSTART line, preserving TZID so the rrule library handles DST
-	// correctly (e.g. America/Denver wall-clock 10:00 stays 10:00 across MST/MDT).
-	tzid := base.Start.Location().String()
-	var dtstart string
-	if tzid == "" || tzid == "UTC" {
-		dtstart = "DTSTART:" + base.Start.UTC().Format("20060102T150405Z")
-	} else {
-		dtstart = "DTSTART;TZID=" + tzid + ":" + base.Start.Format("20060102T150405")
-	}
+	var set *rrulelib.Set
+	if rruleProp != nil {
+		// Build the DTSTART line, preserving TZID so the rrule library handles DST
+		// correctly (e.g. America/Denver wall-clock 10:00 stays 10:00 across MST/MDT).
+		tzid := base.Start.Location().String()
+		var dtstart string
+		if tzid == "" || tzid == "UTC" {
+			dtstart = "DTSTART:" + base.Start.UTC().Format("20060102T150405Z")
+		} else {
+			dtstart = "DTSTART;TZID=" + tzid + ":" + base.Start.Format("20060102T150405")
+		}
 
-	set, err := rrulelib.StrToRRuleSet(dtstart + "\nRRULE:" + rruleProp.Value)
-	if err != nil {
-		// Unparseable RRULE — fall back to master event
-		return []types.Event{base}, nil
+		set, err = rrulelib.StrToRRuleSet(dtstart + "\nRRULE:" + rruleProp.Value)
+		if err != nil {
+			// Unparseable RRULE — fall back to master event
+			return []types.Event{base}, nil
+		}
+	} else {
+		// RDATE-only: DTSTART is the first instance, the RDATEs are the rest.
+		set = &rrulelib.Set{}
+		set.DTStart(base.Start)
+		set.RDate(base.Start)
+	}
+	for _, t := range rdates {
+		set.RDate(t)
+	}
+	for _, t := range collectDates(comp, ical.PropExceptionDates) {
+		set.ExDate(t)
+	}
+	for _, t := range replaced {
+		set.ExDate(t)
 	}
 
 	var occurrences []types.Event
@@ -71,6 +123,32 @@ func expandVEvent(comp *ical.Component, calendarID, etag string, rangeStart, ran
 		occurrences = append(occurrences, occ)
 	}
 	return occurrences, nil
+}
+
+// collectDates returns every date-time listed in the component's EXDATE or
+// RDATE properties. Each property may list several comma-separated values.
+func collectDates(comp *ical.Component, name string) []time.Time {
+	var out []time.Time
+	for i := range comp.Props[name] {
+		out = append(out, parseDateValues(&comp.Props[name][i])...)
+	}
+	return out
+}
+
+// parseDateValues parses a property whose value is a comma-separated list of
+// dates or date-times, honoring its TZID and VALUE parameters. Values that
+// don't parse (such as RDATE periods) are skipped.
+func parseDateValues(p *ical.Prop) []time.Time {
+	var out []time.Time
+	for _, v := range strings.Split(p.Value, ",") {
+		one := ical.NewProp(p.Name)
+		one.Params = p.Params
+		one.Value = strings.TrimSpace(v)
+		if t, err := one.DateTime(nil); err == nil {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 func vEventToEvent(comp *ical.Component, calendarID, etag string) (types.Event, error) {

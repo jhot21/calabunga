@@ -1,6 +1,7 @@
 package caldav_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -141,4 +142,122 @@ func TestEventToVCalendar_RejectsAnInvalidRecurrence(t *testing.T) {
 		Recurrence: &types.Recurrence{Frequency: "hourly", Interval: 1},
 	})
 	assert.ErrorIs(t, err, caldav.ErrInvalidRecurrence)
+}
+
+func june(fixture string) ([]types.Event, error) {
+	return caldav.ParseVCalendar([]byte(fixture), "cal-1", `"e"`,
+		time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 6, 30, 0, 0, 0, 0, time.UTC))
+}
+
+func starts(events []types.Event) []string {
+	var out []string
+	for _, e := range events {
+		out = append(out, e.Start.UTC().Format("0102T1504"))
+	}
+	return out
+}
+
+const exdateFixture = `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:ex@example.com
+SUMMARY:Standup
+DTSTART:20260602T100000Z
+DTEND:20260602T103000Z
+RRULE:FREQ=WEEKLY;BYDAY=TU
+EXDATE:20260616T100000Z
+END:VEVENT
+END:VCALENDAR`
+
+func TestParseVCalendar_ExdateRemovesThatOccurrence(t *testing.T) {
+	events, err := june(exdateFixture)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"0602T1000", "0609T1000", "0623T1000"}, starts(events))
+}
+
+func TestParseVCalendar_ExdateWithSeveralValues(t *testing.T) {
+	fixture := strings.Replace(exdateFixture, "EXDATE:20260616T100000Z", "EXDATE:20260616T100000Z,20260623T100000Z", 1)
+	events, err := june(fixture)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"0602T1000", "0609T1000"}, starts(events))
+}
+
+func TestParseVCalendar_RdateAddsOccurrences(t *testing.T) {
+	fixture := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:rd@example.com
+SUMMARY:Irregular
+DTSTART:20260602T100000Z
+DTEND:20260602T110000Z
+RDATE:20260610T100000Z,20260620T100000Z
+END:VEVENT
+END:VCALENDAR`
+	events, err := june(fixture)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"0602T1000", "0610T1000", "0620T1000"}, starts(events))
+}
+
+const overrideFixture = `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:ov@example.com
+SUMMARY:Standup
+DTSTART:20260602T100000Z
+DTEND:20260602T103000Z
+RRULE:FREQ=WEEKLY;BYDAY=TU
+END:VEVENT
+BEGIN:VEVENT
+UID:ov@example.com
+RECURRENCE-ID:20260616T100000Z
+SUMMARY:Standup (moved)
+DTSTART:20260617T140000Z
+DTEND:20260617T143000Z
+END:VEVENT
+END:VCALENDAR`
+
+func TestParseVCalendar_OverrideReplacesItsOriginalSlot(t *testing.T) {
+	events, err := june(overrideFixture)
+	require.NoError(t, err)
+
+	// June 16 10:00 is gone; the moved occurrence appears once, on June 17.
+	assert.ElementsMatch(t, []string{"0602T1000", "0609T1000", "0623T1000", "0617T1400"}, starts(events))
+
+	var moved types.Event
+	for _, e := range events {
+		if e.Title == "Standup (moved)" {
+			moved = e
+		}
+	}
+	require.NotEmpty(t, moved.UID)
+	assert.NotEmpty(t, moved.RecurrenceID, "overrides must be marked so they are not edited as the series")
+}
+
+func TestParseVCalendar_OverrideOutsideTheRangeIsLeftOut(t *testing.T) {
+	fixture := strings.Replace(overrideFixture, "DTSTART:20260617T140000Z", "DTSTART:20260817T140000Z", 1)
+	fixture = strings.Replace(fixture, "DTEND:20260617T143000Z", "DTEND:20260817T143000Z", 1)
+
+	events, err := june(fixture)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"0602T1000", "0609T1000", "0623T1000"}, starts(events))
+}
+
+func TestParseVCalendar_SeriesKeepsWallClockAcrossDST(t *testing.T) {
+	fixture := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:dst@example.com
+SUMMARY:Morning
+DTSTART;TZID=America/Denver:20260303T100000
+DTEND;TZID=America/Denver:20260303T110000
+RRULE:FREQ=WEEKLY;BYDAY=TU
+END:VEVENT
+END:VCALENDAR`
+	events, err := caldav.ParseVCalendar([]byte(fixture), "c", `"e"`,
+		time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 3, 20, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+
+	// DST began March 8: 10:00 local is 17:00Z before it and 16:00Z after.
+	assert.Equal(t, []string{"0303T1700", "0310T1600", "0317T1600"}, starts(events))
 }

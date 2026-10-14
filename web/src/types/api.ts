@@ -31,6 +31,7 @@ export interface Event {
   description?: string;
   location?: string;
   recurrence?: Recurrence;
+  recurrenceId?: string;  // set on an occurrence that was modified on its own
   originalStart?: string; // update requests only: start of the occurrence that was opened
 }
 

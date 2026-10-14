@@ -361,3 +361,58 @@ func TestBaikal_RecurringSeriesRoundTrip(t *testing.T) {
 	w = serve(httptest.NewRequest("PUT", "/api/events/"+moved.UID+"?editScope=all&calendarId="+calendarPath, strings.NewReader(string(body))))
 	assert.Equal(t, http.StatusNotImplemented, w.Code)
 }
+
+// A series edited elsewhere (a deleted occurrence, a moved one) must list correctly.
+func TestBaikal_ListHonorsExdateAndMovedOccurrences(t *testing.T) {
+	client := caldav.NewClient(baikalURL, testUser, testPass, quirks.Baikal{})
+	home, err := caldav.Discover(client, baikalURL)
+	require.NoError(t, err)
+	calendarPath := home + "default/"
+
+	path := calendarPath + "edited-elsewhere.ics"
+	_, err = client.Put(path, []byte(`BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Other Client//EN
+BEGIN:VEVENT
+UID:edited-elsewhere@calabunga
+DTSTAMP:20260601T000000Z
+SUMMARY:Standup
+DTSTART:20260602T100000Z
+DTEND:20260602T103000Z
+RRULE:FREQ=WEEKLY;BYDAY=TU
+EXDATE:20260609T100000Z
+END:VEVENT
+BEGIN:VEVENT
+UID:edited-elsewhere@calabunga
+DTSTAMP:20260601T000000Z
+RECURRENCE-ID:20260616T100000Z
+SUMMARY:Standup (moved)
+DTSTART:20260617T140000Z
+DTEND:20260617T143000Z
+END:VEVENT
+END:VCALENDAR`), "")
+	require.NoError(t, err)
+	defer client.Delete(path, "")
+
+	cfg := config.Config{JWTSecret: "integration-test-secret-32bytes!", JWTMaxTTL: 24 * time.Hour}
+	token, err := auth.Issue(cfg.JWTSecret, auth.Credentials{
+		ServerURL: baikalURL, Username: testUser, Password: testPass, Quirks: "baikal",
+	}, time.Hour, cfg.JWTMaxTTL)
+	require.NoError(t, err)
+	req := httptest.NewRequest("GET", "/api/events?calendarId="+calendarPath+"&start=2026-06-01T00:00:00Z&end=2026-06-30T00:00:00Z", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	api.JWTMiddleware(cfg)(api.NewEventsHandler(cfg)).ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var events []types.Event
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &events))
+	var got []string
+	for _, e := range events {
+		if e.UID == "edited-elsewhere@calabunga" {
+			got = append(got, e.Start.UTC().Format("0102T1504"))
+		}
+	}
+	// June 9 was deleted, June 16 moved to June 17 14:00.
+	assert.ElementsMatch(t, []string{"0602T1000", "0623T1000", "0617T1400"}, got)
+}
